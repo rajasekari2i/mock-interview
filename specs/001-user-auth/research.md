@@ -24,25 +24,27 @@ callback to the initiating browser transaction.
 [OAuth 2.0 Security BCP](https://datatracker.ietf.org/doc/html/rfc9700),
 [Authlib Starlette integration](https://docs.authlib.org/en/v1.7.0/oauth2/client/web/starlette.html)
 
-## Decision 2: First-login binding for pre-provisioned users
+## Decision 2: First-login binding and controlled Candidate registration
 
-**Decision**: Admin provisioning creates the User, organization, role, status, and Candidate-profile
-association before login. On the first successful Google callback, atomically match the verified
-normalized email to exactly one active, unbound User in the single v1 organization and bind
-`(issuer, subject)` to it. Do not create an account or authorization state during login. Subsequent
-logins resolve only by `(issuer, subject)`; email drift never rebinds automatically. Collision or
-ambiguity is denied and audited. Explicit identity rebinding is not part of v1.
+**Decision**: Preserve Admin pre-provisioning for every role. On first Google callback, first search
+for an active, unbound User by verified normalized email across organizations. Exactly one match
+binds without requiring a domain mapping or adding registration provenance; multiple matches deny
+as an identity conflict. Only when no User matches, derive the validated exact email domain,
+acquire its transaction advisory lock, and consult the active mapping. A mapping permits atomic
+creation of an active Candidate User, CandidateProfile, ExternalLoginIdentity, immutable mapping
+provenance, audit events, and session. No mapping denies with `ACCESS_NOT_PROVISIONED` and leaves no
+partial rows. Subsequent logins resolve by `(issuer, subject)`; email drift never rebinds.
 
-**Rationale**: Admins typically cannot know a Google subject before first login. This preserves the
-pre-provisioning requirement while making the clarified stable-subject association operational.
-V1 is single-organization; future multi-tenant login will need an organization hint or invitation
-context if the same normalized email can exist in multiple organizations.
+**Rationale**: Mapping the verified domain supplies an explicit tenant without allowing users to
+select a role or organization. Provenance distinguishes self-registered Candidates from
+independently provisioned users for later mapping lifecycle operations.
 
 **Alternatives considered**:
 
 - Admin supplies Google `sub`: secure but operationally impractical for normal provisioning.
 - Match email on every login: rejected because it silently moves identity.
-- Create the User during callback: rejected by FR-001.
+- Create an unmapped User during callback: rejected because it bypasses tenant approval.
+- Infer an organization from a suffix or first matching email: rejected as cross-tenant risk.
 
 ## Decision 3: Typed PostgreSQL persistence
 
@@ -150,23 +152,25 @@ domain-behavior boundary.
 
 ## Decision 8: Admin provisioning and Candidate invariants
 
-**Decision**: Provide Admin-only API operations to create pre-provisioned Users and to change role
-or status. Candidate creation/role assignment and CandidateProfile association occur in one
-transaction before a Candidate becomes active. Database uniqueness enforces at most one profile
-per User and one User per profile; services enforce the "every Candidate has exactly one profile"
-and same-organization invariant because a simple foreign key cannot enforce the role-conditional
-existence rule. V1 rejects a role change from Candidate to Manager/Admin with
+**Decision**: Provide Admin-only API operations to create pre-provisioned Users, manage domain
+mappings, and change role or status. Candidate creation/role assignment and CandidateProfile
+association occur in one transaction before a Candidate becomes active, whether provisioned or
+self-registered. Database uniqueness enforces at most one profile per User and one User per
+profile; services enforce the "every Candidate has exactly one profile" and same-organization
+invariant because a simple foreign key cannot enforce the role-conditional existence rule. V1
+rejects a role change from Candidate to Manager/Admin with
 `CANDIDATE_PROFILE_CONFLICT` while a CandidateProfile exists; profile archival/deletion requires a
 separately specified Candidate lifecycle and is not inferred by authentication. Successful
 role/status mutations revoke all sessions and audit atomically.
 
-**Rationale**: Seed data alone does not satisfy FR-001, and role/disable revocation cannot be tested
-without an authoritative mutation path.
+**Rationale**: Seed data alone does not satisfy the authoritative Admin mapping/user lifecycle, and
+role, mapping, or disable revocation cannot be tested without mutation paths.
 
 **Alternatives considered**:
 
 - Deferred constraint trigger: rejected initially due to complexity and migration burden.
-- Candidate profile creation on login: rejected because login cannot provision authorization state.
+- Candidate profile creation separately from self-registration: rejected because partial Candidate
+  authorization state could commit.
 
 ## Decision 9: Audit and observability
 
@@ -246,6 +250,123 @@ errors, never for missing a numeric performance target.
 
 **Rationale**: This satisfies SC-009 without reintroducing the rejected 1000 requests/second or
 200 ms p95 gates or benchmarking Google availability.
+
+## Decision 14: Durable domain mapping and registration provenance
+
+**Decision**: Add `OrganizationDomainMapping` with a stable UUID, target organization, normalized
+domain, timestamps, and nullable `removed_at`. Removal is soft. A partial unique index permits only
+one active row per normalized domain while allowing a later mapping incarnation without attaching
+old disabled Candidates to it. Add nullable, immutable `User.registration_domain_mapping_id` with
+`ON DELETE RESTRICT`; null means independently pre-provisioned.
+
+**Rationale**: Email scans cannot safely distinguish registration origin, and hard deletion would
+destroy the provenance required for exact removal/reassignment targeting.
+
+**Alternatives considered**:
+
+- Hard-delete mappings: rejected because provenance and auditability would be lost.
+- Globally unique soft row with reactivation: rejected because old Candidates would silently join
+  a later mapping incarnation.
+- Infer provenance from current email domain: rejected because email snapshots can drift.
+
+## Decision 15: Exact domain validation and Google display names
+
+**Decision**: Move email/domain normalization to a shared auth identity utility using the existing
+`email-validator` dependency and IDNA ASCII canonicalization. Domains are trimmed, lowercased,
+syntax-validated, and matched by exact equality; wildcards, URLs, `@`, malformed labels, and
+implicit subdomains are rejected. Extend verified `GoogleClaims` with optional `name`; normalize
+Unicode and whitespace, reject control characters or values over 200 characters, and fall back to
+the validated normalized email local part.
+
+**Rationale**: One canonical boundary prevents Admin and provider paths from disagreeing, while
+optional provider profile data must never make authentication fail or inject unsafe display text.
+
+**Alternatives considered**:
+
+- Suffix/wildcard matching: rejected because it can authorize unintended tenants.
+- Store raw domains or add PostgreSQL CITEXT: rejected; canonical application values and a normal
+  index are sufficient.
+- Require the Google `name` claim: rejected because it is optional.
+
+## Decision 16: PostgreSQL serialization and tenant cascades
+
+**Decision**: Acquire `pg_advisory_xact_lock` from a fixed namespace and normalized-domain hash for
+registration and every mapping mutation, followed by `SELECT ... FOR UPDATE` on the mapping and
+affected Users in deterministic UUID order. Revision `002` recreates the three existing composite
+tenant FKs with `ON UPDATE CASCADE`; updating locked `User.org_id` then cascades to CandidateProfile,
+ExternalLoginIdentity, and AuthenticationSession. Preflight target email uniqueness before writes.
+
+**Rationale**: Row locks cannot serialize an absent-mapping/create race, while advisory transaction
+locks are narrow and automatically released. Cascades avoid the impossible parent-first/child-first
+ordering imposed by the current immediate composite FKs.
+
+**Alternatives considered**:
+
+- Serializable isolation with retry: viable but invasive across the callback/request stack.
+- Table locks: rejected because unrelated domains would block one another.
+- Deferrable FKs and explicit updates: viable but more error-prone for simple ownership cascades.
+
+## Decision 17: Mapping removal and reassignment lifecycle
+
+**Decision**: Removal locks the mapping and provenance-linked Candidates, sets `removed_at`,
+disables those Users, increments auth generation, revokes active sessions with
+`DOMAIN_MAPPING_REMOVED`, and audits atomically. Reassignment validates an active target
+organization, locks provenance-linked Candidates, invokes every registered tenant-migration
+participant, updates the mapping and User organizations, increments generations, revokes sessions
+with `DOMAIN_MAPPING_REASSIGNED`, and audits. Independently provisioned Users are untouched.
+Historical AuditEvents remain immutable in their original organization.
+Reassignment to the mapping's current organization returns the current representation as an
+idempotent `200` without participant invocation, generation change, session revocation, or audit.
+
+**Rationale**: Explicit provenance and terminal session revocation prevent stale tenant access;
+immutable historical events preserve the context in which actions occurred.
+
+**Alternatives considered**:
+
+- Preserve or rewrite sessions: rejected because old authorization context must not survive.
+- Rewrite historical audit rows: rejected because audit history is append-only.
+- Best-effort partial migration: rejected by the atomic reassignment requirement.
+
+## Decision 18: Same-transaction tenant-migration participants
+
+**Decision**: Add a typed participant protocol with stable name plus `validate_and_lock` and
+`migrate` operations. The coordinator supplies the one existing `AsyncSession`, fixed source/target
+organizations, ordered Candidate IDs, and time. Participants use only that transaction, lock rows
+deterministically, perform no commit/rollback or external I/O, and raise on any invariant failure.
+The registry rejects duplicate names and has a completeness contract test. Current production has
+only authentication-owned rows; future Candidate-owned PostgreSQL modules must register before
+reassignment supports them.
+
+**Rationale**: FR-017 requires all Candidate-owned tenant data to move atomically. A narrow
+in-process contract supports that requirement without a distributed transaction or speculative
+domain implementation.
+
+**Alternatives considered**:
+
+- Discover tables dynamically: rejected because ownership and business invariants are not safely
+  inferable from schema metadata.
+- Events/queue saga: rejected because it is eventually consistent, not atomic.
+- External-system participation: rejected; external I/O cannot join the PostgreSQL transaction and
+  must block reassignment until a separately approved migration design exists.
+
+## Decision 19: Admin APIs and frontend callback origin
+
+**Decision**: Add Admin-only list/create/reassign/remove mapping endpoints. Reuse authenticated
+Admin dependencies and exact Origin/double-submit CSRF for mutations; add DELETE to CORS. Return
+safe validation, not-found, conflict, and migration-failure envelopes. Build OAuth success/error
+redirects from one validated configured frontend application origin rather than relative API URLs
+or request headers, and render allowlisted callback errors in the frontend.
+
+**Rationale**: Runtime mapping control must be authorized and audited. Absolute configured
+frontend redirects also fix the current port-8000 error redirect without trusting Host or forwarded
+headers.
+
+**Alternatives considered**:
+
+- Seed/environment-only mapping: rejected by the clarified Admin API requirement.
+- Relative callback redirects: rejected because the callback API and frontend use different local
+  ports and deployments may use distinct upstreams.
+- Host-derived redirects: rejected as an open-redirect/proxy-trust risk.
 
 ## Dependency Review
 

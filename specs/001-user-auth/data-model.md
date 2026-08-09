@@ -23,8 +23,31 @@
 
 Relationships:
 
-- Has many Users, CandidateProfiles, AuthenticationSessions, and AuditEvents.
-- V1 seeds one development organization; the schema remains tenancy-ready.
+- Has many OrganizationDomainMappings, Users, CandidateProfiles, AuthenticationSessions, and
+  AuditEvents.
+
+## OrganizationDomainMapping
+
+| Field | Type | Rules |
+|---|---|---|
+| `id` | UUID | Primary key; stable mapping-incarnation identifier |
+| `org_id` | UUID | Required FK to active target Organization; delete restricted |
+| `normalized_domain` | varchar(253) | Required canonical IDNA ASCII, lowercase, exact-match value |
+| `created_at` | timestamptz | Required |
+| `updated_at` | timestamptz | Required |
+| `removed_at` | timestamptz | Nullable; non-null means unavailable for registration |
+
+Constraints and invariants:
+
+- Partial unique index on `normalized_domain WHERE removed_at IS NULL`: at most one active mapping
+  per exact domain while preserving removed mapping incarnations and their provenance.
+- Wildcards, URLs, `@`, empty/invalid labels, and implicit parent/subdomain matches are rejected.
+- Removal is soft; removed rows cannot be reassigned or used for login registration.
+- Create, remove, reassign, and first-login registration acquire the same transaction advisory lock
+  for the canonical domain before reading or mutating a mapping.
+- Reassignment updates `org_id` only after target-organization and migration preflight succeeds.
+- Reassignment to the current `org_id` is an idempotent no-op with no participant, generation,
+  session, timestamp, or audit mutation.
 
 ## User
 
@@ -38,6 +61,7 @@ Relationships:
 | `role` | text | `CANDIDATE`, `MANAGER`, or `ADMIN` |
 | `status` | text | `ACTIVE` or `DISABLED` |
 | `auth_generation` | bigint | Required, starts at 1, increases on global revocation |
+| `registration_domain_mapping_id` | UUID | Nullable FK to OrganizationDomainMapping, delete restricted |
 | `created_at` | timestamptz | Required |
 | `updated_at` | timestamptz | Required |
 
@@ -45,12 +69,17 @@ Constraints and invariants:
 
 - Unique `(org_id, normalized_email)`.
 - Exactly one role per User.
-- Public/self-registration is absent; Admin provisioning is authoritative.
+- Null `registration_domain_mapping_id` means independently pre-provisioned. A non-null value is
+  immutable provenance for a self-registered Candidate and requires role `CANDIDATE`.
+- A verified exact active domain mapping may create an active Candidate atomically; Manager/Admin
+  roles remain Admin-provisioned and cannot be selected during registration.
 - Changing role or disabling the User increments `auth_generation`, revokes all active sessions,
   and writes an AuditEvent in the same transaction.
 - Re-enabling does not decrement generation or restore a session.
 - A Candidate may become active only after a valid same-organization CandidateProfile association
   exists. The service enforces this role-conditional invariant transactionally.
+- Mapping reassignment preflights target `(org_id, normalized_email)` uniqueness, updates the User
+  tenant, increments generation, cascades owned authentication rows, and revokes all sessions.
 
 ## ExternalLoginIdentity
 
@@ -70,8 +99,9 @@ Constraints and invariants:
 
 - Unique `(provider, issuer, subject)`.
 - Unique `(user_id, provider)`; one Google identity per User in v1.
-- First binding selects one active, unbound, pre-provisioned User by verified normalized email in
-  the single v1 organization and inserts the identity atomically.
+- First binding selects exactly one active, unbound, pre-provisioned User by verified normalized
+  email across organizations without requiring a mapping; multiple matches deny. Only no match
+  proceeds to exact-domain mapping and atomic Candidate creation.
 - Concurrent or conflicting bindings fail closed and produce a safe AuditEvent.
 - Later logins resolve by `(issuer, subject)` only; email change never auto-rebinds.
 
@@ -89,7 +119,7 @@ Constraints and invariants:
 
 - Unique `user_id`: at most one profile per User and one User per profile.
 - CandidateProfile and User must share `org_id`; enforce with a composite FK/unique parent key where
-  supported by the migration.
+  supported by the migration and `ON UPDATE CASCADE` for tenant reassignment.
 - The linked User must have role `CANDIDATE`; transactional service validation enforces this
   role-conditional rule.
 - Candidate provisioning creates/associates the profile before the User becomes active.
@@ -123,6 +153,8 @@ Revocation reasons:
 - `ABSOLUTE_EXPIRED`
 - `IDLE_EXPIRED`
 - `SECURITY_REVOKED` (reserved for a reviewed future Admin incident operation)
+- `DOMAIN_MAPPING_REMOVED`
+- `DOMAIN_MAPPING_REASSIGNED`
 
 Validation on every authenticated request:
 
@@ -187,6 +219,9 @@ Required event types:
 - `LOGOUT_ALL`
 - `SESSION_EXPIRED`, `SESSIONS_REVOKED`
 - `USER_PROVISIONED`, `USER_STATUS_CHANGED`, `USER_ROLE_CHANGED`
+- `CANDIDATE_SELF_REGISTERED`
+- `ORG_DOMAIN_MAPPING_CREATED`, `ORG_DOMAIN_MAPPING_REMOVED`, `ORG_DOMAIN_MAPPING_REASSIGNED`
+- `CANDIDATE_ORGANIZATION_CHANGED`
 - `IDENTITY_BOUND`, `IDENTITY_BINDING_DENIED`
 - `CANDIDATE_PROFILE_LINKED`, `CANDIDATE_PROFILE_LINK_DENIED`
 - `AUTHORIZATION_DENIED`
@@ -195,6 +230,16 @@ Audit rows are append-only through the application API. Tokens, cookie values, a
 codes, raw state/nonce, provider payloads, and unnecessary email/claim values are prohibited.
 
 ## Typed Authorization Inputs (non-persistent)
+
+### VerifiedGoogleClaims
+
+- `issuer`: validated exact HTTPS issuer
+- `subject`: non-empty stable Google subject
+- `email`: syntactically validated and normalized verified email
+- `name`: optional provider-signed display name after Unicode/whitespace/control/length validation
+
+When `name` is absent or unusable, self-registration uses the validated email local part. Provider
+payloads and rejected values are never persisted in audit metadata or logs.
 
 ### AuthContext
 
@@ -216,15 +261,33 @@ codes, raw state/nonce, provider payloads, and unnecessary email/claim values ar
 Policies always require organization equality, then role/capability, then applicable owner/manager
 equality. Missing scope data never produces an allow decision.
 
+## Tenant Migration Participant (non-persistent)
+
+Each Candidate-owned PostgreSQL module that cannot rely solely on ownership-FK cascades registers
+exactly one typed participant:
+
+- stable unique `name`;
+- `validate_and_lock(session, candidate_user_ids, source_org_id, target_org_id)`;
+- `migrate(session, candidate_user_ids, source_org_id, target_org_id, now) -> affected_count`.
+
+The coordinator supplies one AsyncSession and transaction. Participants lock rows in deterministic
+order, perform no commit, rollback, external I/O, or nested transaction, and raise on any conflict.
+Any exception rolls back mapping, Users, all participants, session revocation, and new audit events.
+Simple future Candidate-owned tables SHOULD use a single composite ownership FK with
+`ON UPDATE CASCADE`; tables with business invariants MUST also register a participant.
+
 ## State Transitions
 
 ### User
 
 ```text
 Admin provisions -> ACTIVE or DISABLED
+mapped verified first login -> ACTIVE CANDIDATE + profile + identity + provenance
 ACTIVE --disable--> DISABLED + generation++ + revoke all
 DISABLED --enable--> ACTIVE (old sessions stay revoked)
 role A --change--> role B + generation++ + revoke all
+self-registered Candidate --mapping removed--> DISABLED + generation++ + revoke all
+self-registered Candidate --mapping reassigned--> new organization + generation++ + revoke all
 ```
 
 A transition to Candidate requires the CandidateProfile invariant before commit. A transition
@@ -235,10 +298,23 @@ transaction makes no role, generation, session, or audit mutation.
 
 ```text
 unbound pre-provisioned User --verified first login--> bound Google identity
+unmapped new identity --verified mapped domain--> self-registered Candidate + bound identity
 bound identity --matching subject login--> authenticated
 bound identity --email drift--> authenticated by subject; snapshot may update safely
 collision/ambiguous email/replay --> denied + audited
 ```
+
+### Organization domain mapping
+
+```text
+absent --Admin create--> ACTIVE
+ACTIVE --Admin remove--> REMOVED + disable provenance-linked Candidates + revoke all
+ACTIVE --Admin reassign--> ACTIVE in target organization + migrate linked Candidates/data + revoke all
+REMOVED --> terminal provenance row
+```
+
+Create/remove/reassign and first-registration serialize on the canonical-domain advisory lock.
+Reassignment failure leaves the mapping and every participant unchanged.
 
 ### Session
 
@@ -251,11 +327,16 @@ User generation.
 
 ## Migration and Recovery
 
-- One reviewed initial Alembic migration creates all authentication tables, named constraints, and
-  indexes.
-- Migration tests run upgrade base→head, constraint/collision checks, downgrade head→base in an
-  isolated database, and upgrade again.
-- Production recovery prefers a forward corrective migration after deployment; the downgrade is
-  documented and tested for non-production/release rollback use.
-- Development seed data is idempotent and separate from migrations; it contains no production
-  identity or secret.
+- Preserve implemented revision `001`; add forward revision `002`.
+- Revision `002` creates `organization_domain_mappings`, its partial active-domain index, nullable
+  User provenance FK/index/check, and the two new session revocation check values.
+- Revision `002` drops/recreates `fk_candidate_profiles_user_org`,
+  `fk_external_identity_user_org`, and `fk_authentication_sessions_user_org` with
+  `ON UPDATE CASCADE`. Existing rows receive null provenance and remain independently provisioned.
+- Migration tests populate revision `001`, upgrade to `002`, prove unchanged users, active-domain
+  uniqueness, provenance restrictions, and tenant cascades; then downgrade in isolation and
+  re-upgrade.
+- Production recovery uses a new forward corrective migration. Downgrade is for isolated
+  pre-release validation only and cannot preserve mapping/provenance added after `002`.
+- Development seed tooling remains idempotent and gains explicit organization-domain mapping input;
+  mappings never contain production identity or secrets.

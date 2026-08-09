@@ -1,16 +1,36 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$comment": "Coverage thresholds for orchestrator agents and CI. Portable across projects — adjust values per-repo.",
+  "$comment": "Single source of truth for backend and frontend coverage enforcement.",
   "thresholds": {
     "lines": 100,
     "branches": 100,
     "functions": 100,
     "statements": 100
   },
+  "suites": {
+    "backend": {
+      "command": "python3 -m pytest -c apps/api/pyproject.toml --cov=apps/api/app --cov-branch --cov-report=json:.coverage-backend.json apps/api/tests",
+      "metrics": {
+        "lines": 100,
+        "branches": 100,
+        "functions": 100,
+        "statements": 100
+      },
+      "functionMetric": "Every Python function declaration must execute; verified from coverage JSON and the Python AST."
+    },
+    "frontend": {
+      "command": "npm --prefix apps/web run test:coverage",
+      "metrics": {
+        "lines": 100,
+        "branches": 100,
+        "functions": 100,
+        "statements": 100
+      }
+    }
+  },
   "enforcement": {
-    "command": "npx vitest run --coverage",
+    "command": "bash scripts/quality-gate.sh",
     "blockPRCreation": true,
-    "blockTaskCompletion": true,
-    "description": "Orchestrator agents MUST check coverage against these thresholds before marking any task complete or creating a PR. If coverage drops below any threshold, the task fails."
+    "blockTaskCompletion": true
   }
 }

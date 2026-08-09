@@ -1,10 +1,13 @@
 openapi: 3.1.0
 info:
   title: MockInterview Authentication API
-  version: 0.1.0
+  version: 0.2.0
   description: >-
     V1 Google-only authentication, application sessions, current-user context, and Admin
-    pre-provisioning contracts. OAuth/provider tokens never appear in browser-visible payloads.
+    pre-provisioning/domain-mapping contracts. Approved exact Google email domains permit
+    Candidate-only first-login registration. OAuth/provider tokens never appear in browser payloads.
+    There are intentionally no username/password, credential creation, password change, recovery,
+    reset, expiry, lockout, public organization creation, or self-selected role operations.
 servers:
   - url: /api/v1
 paths:
@@ -230,6 +233,120 @@ paths:
         "404":
           $ref: "#/components/responses/NotFound"
 
+  /admin/organization-domain-mappings:
+    get:
+      operationId: listOrganizationDomainMappings
+      summary: List active organization domain mappings
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Active mappings ordered by normalized domain
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DomainMappingListResponse"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: createOrganizationDomainMapping
+      summary: Approve one exact Google email domain for Candidate registration
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/Origin"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDomainMappingRequest"
+      responses:
+        "201":
+          description: Active mapping created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DomainMappingResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /admin/organization-domain-mappings/{mapping_id}:
+    patch:
+      operationId: reassignOrganizationDomainMapping
+      summary: Atomically move a mapping and its self-registered Candidates to another organization
+      description: >-
+        Admin only. Migrates every registered Candidate-owned PostgreSQL participant, increments
+        auth generations, revokes sessions, and audits in one transaction. Any conflict or
+        participant failure rolls back the complete reassignment. A target equal to the current
+        organization is an idempotent success with no migration, revocation, or audit mutation.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/MappingId"
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/Origin"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReassignDomainMappingRequest"
+      responses:
+        "200":
+          description: >-
+            Mapping and affected Candidates moved and old sessions invalidated, or the unchanged
+            current mapping for a same-organization idempotent request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DomainMappingResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+    delete:
+      operationId: removeOrganizationDomainMapping
+      summary: Remove a mapping and disable its self-registered Candidates
+      description: >-
+        Admin only. Soft-removes the mapping, disables provenance-linked Candidates, increments
+        auth generations, revokes sessions, and audits atomically. Independently provisioned users
+        are unchanged.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/MappingId"
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/Origin"
+      responses:
+        "204":
+          description: Mapping removed and affected Candidate access revoked
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
 components:
   securitySchemes:
     sessionCookie:
@@ -241,6 +358,11 @@ components:
     UserId:
       in: path
       name: user_id
+      required: true
+      schema: { type: string, format: uuid }
+    MappingId:
+      in: path
+      name: mapping_id
       required: true
       schema: { type: string, format: uuid }
     CsrfToken:
@@ -280,6 +402,8 @@ components:
         - CSRF_DENIED
         - IDENTITY_CONFLICT
         - CANDIDATE_PROFILE_CONFLICT
+        - DOMAIN_MAPPING_CONFLICT
+        - TENANT_MIGRATION_CONFLICT
         - VALIDATION_ERROR
         - RESOURCE_NOT_FOUND
     ErrorEnvelope:
@@ -383,6 +507,47 @@ components:
           oneOf:
             - { type: string, format: uuid }
             - { type: "null" }
+    DomainMappingStatus:
+      type: string
+      enum: [ACTIVE, REMOVED]
+    CreateDomainMappingRequest:
+      type: object
+      additionalProperties: false
+      required: [domain, organizationId]
+      properties:
+        domain: { type: string, minLength: 1, maxLength: 253 }
+        organizationId: { type: string, format: uuid }
+    ReassignDomainMappingRequest:
+      type: object
+      additionalProperties: false
+      required: [organizationId]
+      properties:
+        organizationId: { type: string, format: uuid }
+    DomainMappingResponse:
+      type: object
+      additionalProperties: false
+      required: [id, domain, organizationId, status, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        domain: { type: string, minLength: 1, maxLength: 253 }
+        organizationId: { type: string, format: uuid }
+        status:
+          $ref: "#/components/schemas/DomainMappingStatus"
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        removedAt:
+          oneOf:
+            - { type: string, format: date-time }
+            - { type: "null" }
+    DomainMappingListResponse:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/DomainMappingResponse"
 
   responses:
     AuthenticationRequired:
@@ -416,7 +581,7 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }
     Conflict:
-      description: Email, external identity, or Candidate-profile association conflict
+      description: Identity, active-domain, target-tenant, or atomic migration conflict
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -430,6 +595,8 @@ x-security-contract:
   cacheControl: no-store
   providerTokensInBrowser: false
   passwordRoutesPresent: false
+  candidateSelfRegistrationRequiresExactActiveDomainMapping: true
+  selfSelectedRoleOrOrganization: false
   routineTestsUseRealGoogle: false
   csrf:
     readableCookie: mi_csrf

@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-09
 
-**Status**: Planned — tasks update required
+**Status**: Plan approved by explicit review-gate override; tasks generated; implementation pending
 
 **Input**: Authentication-only requirements derived from `docs/MockInterview_PRD.md`, covering
 registration, Google OAuth2 login, logout, manual-password management, sessions, the Candidate,
@@ -19,6 +19,16 @@ Admin, and Manager roles, user identity, and authentication errors.
 - Q: Should Managers have access to readiness reports for interviews they manage? → A: Managers may access readiness reports only for interviews they manage; all other report access remains Admin-only.
 - Q: How should Google identities and Candidate profiles be linked to application users? → A: One stable Google subject identifier maps to exactly one User, and each Candidate User maps to exactly one Candidate profile.
 - Q: What measurable performance target should authenticated API requests meet under expected load? → A: V1 has no fixed throughput or latency acceptance threshold; representative baseline measurements will guide a later target.
+- Q: Which organization should automatically registered Candidates join? → A: Map approved Google email domains to existing organizations.
+- Q: What should happen when a new user's verified Google email domain has no approved organization mapping? → A: Deny registration with ACCESS_NOT_PROVISIONED and direct the user to contact an administrator.
+- Q: How should administrators create and maintain approved email-domain-to-organization mappings? → A: Store mappings in PostgreSQL and manage them through authorized, audited Admin-only API operations.
+- Q: How should the required display name be initialized for a newly registered Candidate? → A: Use Google's signed name claim, with a validated email local-part fallback when no usable name is supplied.
+- Q: What should removing a domain mapping do to Candidates who already registered through that mapping? → A: Atomically disable Candidates registered through that mapping and revoke all of their active sessions.
+- Q: How should an Admin move an approved email domain from one organization to another? → A: Reassign the mapping and migrate existing Candidates registered through it to the new organization.
+- Q: What should happen to active sessions when Candidates are migrated through domain reassignment? → A: Revoke every affected Candidate's active sessions and require a fresh Google login.
+- Q: How should domain reassignment handle Candidate-owned organization-scoped data outside authentication? → A: Atomically migrate all Candidate-owned organization-scoped data to the new organization.
+- Q: How should approved email domains match a new user's verified Google email domain? → A: Require an exact, case-insensitive normalized domain match; subdomains require separate mappings.
+- Q: What consistency should apply when first-login registration races with removal or reassignment of the same domain mapping? → A: Serialize both operations transactionally so registration observes one complete mapping state.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -45,6 +55,25 @@ each successful sign-in establishes the correct application identity and role-sp
 4. **Given** a Google sign-in that does not complete successfully, **When** control returns to
    MockInterview, **Then** no authenticated access is granted and the user receives a safe error or
    recovery path.
+5. **Given** a new user whose verified Google email domain has an approved organization mapping,
+   **When** the user completes Google sign-in for the first time, **Then** an active User and
+   Candidate profile are created atomically in that organization with the Candidate role.
+6. **Given** a new user whose verified Google email domain has no approved organization mapping,
+   **When** the user completes Google sign-in, **Then** registration is denied with safe
+   contact-Admin recovery and no User, Candidate profile, identity, or session is created.
+7. **Given** an Admin removes an approved organization domain mapping, **When** the operation
+   commits, **Then** Candidates registered through that mapping are disabled and all their active
+   sessions are revoked atomically while independently pre-provisioned users remain unchanged.
+8. **Given** an Admin reassigns an approved domain mapping to another organization, **When** the
+   operation commits, **Then** every Candidate registered through that mapping and the Candidate's
+   required profile, identity associations, and Candidate-owned organization-scoped data move
+   atomically to the new organization while independently pre-provisioned users remain unchanged,
+   every affected active session is revoked, and each migrated Candidate must sign in again. If
+   any affected record cannot migrate, the mapping and all affected records remain unchanged.
+9. **Given** first-login registration races with removal or reassignment of the matching domain,
+   **When** both operations execute, **Then** they are serialized so registration observes either
+   the complete mapping state before the mutation or the complete state after it, never a partial
+   tenant transition.
 
 ---
 
@@ -118,7 +147,10 @@ login, password creation, change, forgotten-password, reset, expiry, or lockout 
 
 ### Edge Cases
 
-- A Google identity is valid but is not registered or authorized for MockInterview.
+- A Google identity is valid but its verified email domain has no approved organization mapping.
+- An Admin removes a domain mapping while Candidates registered through it have active sessions.
+- An Admin reassigns a domain mapping while Candidates registered through it have active sessions
+  or organization-scoped data.
 - A Google subject identifier is already associated with another application user or a Candidate
   User is already associated with another Candidate profile; the conflicting association is denied.
 - A user's assigned role changes while the user has an active session.
@@ -133,14 +165,22 @@ login, password creation, change, forgotten-password, reset, expiry, or lockout 
 
 ### Functional Requirements
 
-- **FR-001**: V1 accounts MUST be pre-provisioned by an Admin, MUST belong to one organization, and
-  MUST have exactly one assigned Candidate, Admin, or Manager role before Google login succeeds;
-  public registration and first-login self-registration MUST NOT be offered.
+- **FR-001**: A new user whose verified Google email domain has an approved mapping to an existing
+  active organization MUST be registered atomically on first Google login as an active Candidate
+  User with exactly one Candidate profile in that organization. Admin and Manager roles MUST still
+  be assigned through an authorized administrative operation and MUST NOT be selected during
+  self-registration. If the verified email domain has no approved organization mapping, the system
+  MUST deny registration with `ACCESS_NOT_PROVISIONED` and direct the user to contact an Admin. A
+  new Candidate's display name MUST use the validated, provider-signed Google `name` claim when it
+  is usable and otherwise fall back to the validated local part of the verified email address. A
+  registration domain MUST match an approved mapping exactly after case-insensitive normalization;
+  a parent-domain mapping MUST NOT authorize a subdomain, which requires its own explicit mapping.
 - **FR-002**: The system MUST allow every authorized Candidate, Admin, and Manager to log in using a
   Google account through Google OAuth2.
 - **FR-003**: A successful login MUST resolve one stable Google subject identifier to exactly one
-  MockInterview User and assigned application role before protected access is granted; a Google
-  subject identifier MUST NOT be associated with more than one User.
+  MockInterview User and application role before protected access is granted; a Google subject
+  identifier MUST NOT be associated with more than one User. First-login registration MUST bind
+  the verified Google subject in the same transaction that creates the Candidate User and profile.
 - **FR-004**: The authentication feature MUST recognize the three roles defined by PRD FR-1:
   Candidate, Admin, and Manager.
 - **FR-005**: An authenticated Candidate MUST see only interviews allocated to that Candidate, MUST
@@ -176,6 +216,22 @@ login, password creation, change, forgotten-password, reset, expiry, or lockout 
 - **FR-016**: Login, authentication errors, protected-route errors, and session-expiry interfaces
   MUST meet WCAG 2.2 AA, including keyboard operation, visible focus, semantic labels, sufficient
   contrast, and screen-reader error or status announcements.
+- **FR-017**: Approved organization domain mappings MUST be persisted in PostgreSQL and managed
+  only through authenticated Admin API operations. Creating, changing, or removing a mapping MUST
+  be authorized server-side, reject a domain mapped to more than one organization, and emit a safe
+  audit event without recording credentials or authentication tokens. Removing a mapping MUST
+  atomically disable every Candidate registered through that mapping and revoke all of their active
+  sessions; it MUST NOT affect users who were pre-provisioned independently of that mapping.
+  Reassigning a mapping to another organization MUST atomically move every Candidate registered
+  through that mapping, including the required Candidate profile and external identity tenant
+  associations, to the new organization without moving independently pre-provisioned users. The
+  reassignment MUST revoke every active session for each migrated Candidate and require a fresh
+  login before the Candidate can access the new organization. It MUST also migrate all
+  Candidate-owned organization-scoped data across participating modules in the same atomic
+  operation; if any affected record cannot migrate, the mapping reassignment and every related
+  mutation MUST roll back. First-login registration and mutation of its matching domain mapping
+  MUST be transactionally serialized so registration observes exactly one complete mapping state
+  and cannot commit against a stale or partially changed tenant association.
 
 ### Permission Matrix
 
@@ -195,6 +251,9 @@ login, password creation, change, forgotten-password, reset, expiry, or lockout 
 In scope:
 
 - Admin pre-provisioning of organization-bound users and one assigned v1 role.
+- First-login Candidate self-registration through approved Google email-domain-to-organization
+  mappings.
+- Admin-only management of persisted organization domain mappings.
 - Google OAuth2 login for Candidate, Admin, and Manager.
 - Logout, authentication-session lifecycle, role enforcement, user identity association, and
   authentication or authorization errors.
@@ -207,15 +266,22 @@ Out of scope:
   Candidate identity.
 - Mentor, Reviewer, Program Owner, Staffing/Sales Coordinator, and Question-Bank Curator permission
   models. The requested scope is limited to the three roles explicitly defined in PRD FR-1.
-- Public registration, first-login self-registration, username/password authentication, and
-  password management.
+- Username/password registration, authentication, and password management.
 
 ### Key Entities *(include if feature involves data)*
 
 - **User Identity**: The person recognized by MockInterview, including the assigned application
-  role and, for Candidates, a required one-to-one association with a Candidate profile.
+  role, a validated display name, and, for Candidates, a required one-to-one association with a
+  Candidate profile.
 - **External Login Identity**: The stable Google subject identifier presented for login and its
   required one-to-one association with one MockInterview User.
+- **Organization Domain Mapping**: A persisted, globally unique association from a normalized
+  Google email domain to one existing organization, managed through authorized and audited Admin
+  operations and used only to place first-login Candidate registrations. Each self-registered
+  Candidate retains immutable provenance to the mapping used for registration so removal can
+  disable exactly the affected accounts and revoke their sessions, and reassignment can migrate
+  exactly those accounts to the new organization. Matching is exact after case-insensitive
+  normalization; parent domains do not implicitly include subdomains.
 - **Role Assignment**: The user's Candidate, Admin, or Manager authority and the corresponding
   allowed actions and data scope.
 - **Authentication Session**: The bounded period during which a successfully authenticated user
@@ -252,6 +318,16 @@ Out of scope:
 - **SC-009**: Before release, a representative authentication API load test records sustained
   throughput plus p50 and p95 latency as a non-blocking baseline; v1 has no fixed throughput or
   latency acceptance threshold until production usage is measured.
+- **SC-010**: In first-login registration tests, 100% of new users with an approved domain mapping
+  are created in the mapped organization as Candidates with exactly one profile and identity, while
+  100% of users without a mapping are denied and leave no partial registration records.
+- **SC-011**: In domain-mapping authorization and lifecycle tests, 100% of non-Admin mutations are
+  denied; every successful removal disables exactly the Candidates registered through that mapping,
+  revokes all their active sessions, preserves independently pre-provisioned users, and emits the
+  required audit events. Every successful reassignment migrates all affected Candidate-owned
+  organization-scoped records, revokes all affected sessions, and preserves independently
+  pre-provisioned users; every injected migration failure leaves the mapping and all affected
+  records unchanged.
 
 ## Assumptions
 
@@ -260,8 +336,8 @@ Out of scope:
 - V1 users are internal, and external candidates are out of scope as stated in the PRD.
 - Candidate, Admin, and Manager are the only roles governed by this authentication feature because
   they are the three roles explicitly defined in PRD FR-1.
-- Google OAuth2 is required for all three roles. No restriction to a particular email domain is
-  assumed because the PRD states only Google/Gmail login.
+- Google OAuth2 is required for all three roles. First-login Candidate registration is restricted
+  to Google email domains with an approved organization mapping.
 - Candidate access to "own data" includes only data made available by other approved features;
   this specification governs authorization, not the contents of those features.
 - Identity proofing during interview proctoring is a separate capability that consumes the

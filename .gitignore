@@ -2,6 +2,11 @@ node_modules/
 dist/
 build/
 coverage/
+.coverage
+.coverage-*.json
+test-results/
+playwright-report/
+*.tsbuildinfo
 *.db
 .env
 .env.local
@@ -13,6 +18,7 @@ coverage/
 # Python
 __pycache__/
 *.py[cod]
+*.egg-info/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
