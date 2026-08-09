@@ -1,0 +1,31 @@
+node_modules/
+dist/
+build/
+coverage/
+*.db
+.env
+.env.local
+.env.*.local
+!.env.example
+.DS_Store
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# BEADS runtime
+.beads/beads.db
+.beads/daemon.lock
+.beads/daemon.pid
+.beads/daemon.log
+.beads/temp/
+
+# BEADS execution state (working files for context recovery)
+.beads/context/
+.beads/plans/

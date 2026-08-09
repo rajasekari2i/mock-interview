@@ -1,0 +1,438 @@
+openapi: 3.1.0
+info:
+  title: MockInterview Authentication API
+  version: 0.1.0
+  description: >-
+    V1 Google-only authentication, application sessions, current-user context, and Admin
+    pre-provisioning contracts. OAuth/provider tokens never appear in browser-visible payloads.
+servers:
+  - url: /api/v1
+paths:
+  /auth/google/login:
+    get:
+      operationId: beginGoogleLogin
+      summary: Begin backend-managed Google OpenID Connect login
+      parameters:
+        - in: query
+          name: return_path
+          required: false
+          schema:
+            type: string
+          description: Allowlisted relative path only; invalid values are rejected.
+      responses:
+        "302":
+          description: Redirect to Google with one-time state, nonce, and PKCE challenge
+          headers:
+            Location:
+              schema: { type: string, format: uri }
+            Cache-Control:
+              schema: { type: string, const: no-store }
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "503":
+          $ref: "#/components/responses/ProviderUnavailable"
+
+  /auth/google/callback:
+    get:
+      operationId: completeGoogleLogin
+      summary: Validate the OIDC callback and create an application session
+      parameters:
+        - in: query
+          name: code
+          required: false
+          schema: { type: string }
+        - in: query
+          name: state
+          required: true
+          schema: { type: string }
+        - in: query
+          name: error
+          required: false
+          schema: { type: string }
+      responses:
+        "303":
+          description: >-
+            Redirect to a fixed frontend role/error route. Failure redirects include only a safe
+            error code and correlation ID. Success sets the application session cookie.
+          headers:
+            Location:
+              schema: { type: string }
+            Set-Cookie:
+              schema:
+                type: string
+              description: >-
+                Two cookies are set: opaque application session (__Host-mi_session, Secure,
+                HttpOnly, SameSite=Lax, Path=/, no Domain) and readable CSRF token (mi_csrf,
+                Secure, SameSite=Lax, Path=/, no Domain). The CSRF cookie is not an authentication
+                credential; its digest is bound to the server-side session.
+            Cache-Control:
+              schema: { type: string, const: no-store }
+        "400":
+          $ref: "#/components/responses/InvalidOAuthResponse"
+
+  /auth/me:
+    get:
+      operationId: getCurrentUser
+      summary: Return minimal authenticated application context
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Current user and session expiries
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUserResponse"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+
+  /auth/logout:
+    post:
+      operationId: logoutAllSessions
+      summary: Invalidate every session for the resolved user and clear the browser cookie
+      description: >-
+        Idempotent. If a retained session identifies the user, all their sessions are revoked.
+        Otherwise the local cookie is cleared and the response still succeeds.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/Origin"
+      responses:
+        "204":
+          description: Logout completed or was already complete
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+              description: Expired application session and CSRF cookies
+            Cache-Control:
+              schema: { type: string, const: no-store }
+        "403":
+          $ref: "#/components/responses/CsrfDenied"
+
+  /admin/users:
+    post:
+      operationId: provisionUser
+      summary: Pre-provision one organization-bound application user
+      description: >-
+        Admin only. Candidate provisioning creates the minimal one-to-one CandidateProfile in the
+        same transaction. This endpoint never creates a password credential.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/Origin"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProvisionUserRequest"
+      responses:
+        "201":
+          description: Pre-provisioned user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUserResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /admin/users/{user_id}/role:
+    patch:
+      operationId: changeUserRole
+      summary: Change one User role and invalidate all their sessions
+      description: >-
+        Admin only. A transition to Candidate creates or validates the one-to-one CandidateProfile
+        before commit. V1 rejects transitions away from Candidate while a CandidateProfile exists.
+        A successful role change, auth-generation increment, revocation, and audit event are atomic.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/Origin"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [role]
+              properties:
+                role:
+                  $ref: "#/components/schemas/Role"
+      responses:
+        "200":
+          description: Updated User; all old sessions are invalid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUserResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /admin/users/{user_id}/status:
+    patch:
+      operationId: changeUserStatus
+      summary: Enable or disable a User
+      description: >-
+        Admin only. Disablement increments auth generation and revokes all sessions atomically.
+        Re-enablement never restores an old session.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/Origin"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [status]
+              properties:
+                status:
+                  $ref: "#/components/schemas/UserStatus"
+      responses:
+        "200":
+          description: Updated User
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUserResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-mi_session
+
+  parameters:
+    UserId:
+      in: path
+      name: user_id
+      required: true
+      schema: { type: string, format: uuid }
+    CsrfToken:
+      in: header
+      name: X-CSRF-Token
+      required: true
+      schema: { type: string, minLength: 32 }
+      description: Must equal the readable mi_csrf cookie and match the server-side session digest.
+    Origin:
+      in: header
+      name: Origin
+      required: true
+      schema: { type: string, format: uri }
+
+  schemas:
+    Role:
+      type: string
+      enum: [CANDIDATE, MANAGER, ADMIN]
+    UserStatus:
+      type: string
+      enum: [ACTIVE, DISABLED]
+    RecoveryAction:
+      type: string
+      enum: [SIGN_IN_AGAIN, CONTACT_ADMIN, RETRY, GO_TO_ROLE_HOME]
+    ErrorCode:
+      type: string
+      enum:
+        - AUTHENTICATION_REQUIRED
+        - SESSION_EXPIRED
+        - SESSION_REVOKED
+        - ACCESS_NOT_PROVISIONED
+        - ACCOUNT_DISABLED
+        - OAUTH_CANCELLED
+        - OAUTH_PROVIDER_UNAVAILABLE
+        - OAUTH_RESPONSE_INVALID
+        - FORBIDDEN
+        - CSRF_DENIED
+        - IDENTITY_CONFLICT
+        - CANDIDATE_PROFILE_CONFLICT
+        - VALIDATION_ERROR
+        - RESOURCE_NOT_FOUND
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, recovery, message, correlationId]
+          properties:
+            code:
+              $ref: "#/components/schemas/ErrorCode"
+            recovery:
+              $ref: "#/components/schemas/RecoveryAction"
+            message:
+              type: string
+            correlationId:
+              type: string
+              minLength: 1
+    CandidateCurrentUser:
+      type: object
+      additionalProperties: false
+      required: [id, organizationId, displayName, role, candidateProfileId]
+      properties:
+        id: { type: string, format: uuid }
+        organizationId: { type: string, format: uuid }
+        displayName: { type: string, minLength: 1 }
+        role: { type: string, const: CANDIDATE }
+        candidateProfileId: { type: string, format: uuid }
+    ManagerCurrentUser:
+      type: object
+      additionalProperties: false
+      required: [id, organizationId, displayName, role]
+      properties:
+        id: { type: string, format: uuid }
+        organizationId: { type: string, format: uuid }
+        displayName: { type: string, minLength: 1 }
+        role: { type: string, const: MANAGER }
+    AdminCurrentUser:
+      type: object
+      additionalProperties: false
+      required: [id, organizationId, displayName, role]
+      properties:
+        id: { type: string, format: uuid }
+        organizationId: { type: string, format: uuid }
+        displayName: { type: string, minLength: 1 }
+        role: { type: string, const: ADMIN }
+    CurrentUser:
+      oneOf:
+        - $ref: "#/components/schemas/CandidateCurrentUser"
+        - $ref: "#/components/schemas/ManagerCurrentUser"
+        - $ref: "#/components/schemas/AdminCurrentUser"
+      discriminator:
+        propertyName: role
+        mapping:
+          CANDIDATE: "#/components/schemas/CandidateCurrentUser"
+          MANAGER: "#/components/schemas/ManagerCurrentUser"
+          ADMIN: "#/components/schemas/AdminCurrentUser"
+    CurrentUserResponse:
+      type: object
+      additionalProperties: false
+      required: [user, session]
+      properties:
+        user:
+          $ref: "#/components/schemas/CurrentUser"
+        session:
+          type: object
+          additionalProperties: false
+          required: [absoluteExpiresAt, idleExpiresAt]
+          properties:
+            absoluteExpiresAt: { type: string, format: date-time }
+            idleExpiresAt: { type: string, format: date-time }
+    ProvisionUserRequest:
+      type: object
+      additionalProperties: false
+      required: [organizationId, email, displayName, role, status]
+      properties:
+        organizationId: { type: string, format: uuid }
+        email: { type: string, format: email }
+        displayName: { type: string, minLength: 1, maxLength: 200 }
+        role:
+          $ref: "#/components/schemas/Role"
+        status:
+          $ref: "#/components/schemas/UserStatus"
+    AdminUserResponse:
+      type: object
+      additionalProperties: false
+      required: [id, organizationId, email, displayName, role, status]
+      properties:
+        id: { type: string, format: uuid }
+        organizationId: { type: string, format: uuid }
+        email: { type: string, format: email }
+        displayName: { type: string }
+        role:
+          $ref: "#/components/schemas/Role"
+        status:
+          $ref: "#/components/schemas/UserStatus"
+        candidateProfileId:
+          oneOf:
+            - { type: string, format: uuid }
+            - { type: "null" }
+
+  responses:
+    AuthenticationRequired:
+      description: Missing, expired, or revoked session
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Forbidden:
+      description: Authenticated but outside role, organization, or resource scope
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    InvalidRequest:
+      description: Invalid validated input
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    InvalidOAuthResponse:
+      description: Invalid, cancelled, replayed, or incomplete OIDC callback
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    ProviderUnavailable:
+      description: Google/provider unavailable; user may retry
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    CsrfDenied:
+      description: Missing or invalid CSRF/origin evidence
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    Conflict:
+      description: Email, external identity, or Candidate-profile association conflict
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    NotFound:
+      description: Resource absent or unavailable in the caller organization
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+x-security-contract:
+  cacheControl: no-store
+  providerTokensInBrowser: false
+  passwordRoutesPresent: false
+  routineTestsUseRealGoogle: false
+  csrf:
+    readableCookie: mi_csrf
+    requestHeader: X-CSRF-Token
+    serverStorage: sha256-digest-bound-to-session
+    originValidation: exact-allowlist
