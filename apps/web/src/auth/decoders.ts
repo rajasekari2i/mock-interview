@@ -45,6 +45,11 @@ function string(value: unknown, field: string): string {
   return value;
 }
 
+function nullableString(value: unknown, field: string): string | null {
+  if (value === null) return null;
+  return string(value, field);
+}
+
 function decodeUser(value: unknown): CurrentUser {
   const input = record(value);
   const roleValue = string(input.role, "role");
@@ -52,7 +57,9 @@ function decodeUser(value: unknown): CurrentUser {
   const shared = {
     id: string(input.id, "id"),
     organizationId: string(input.organizationId, "organizationId"),
-    displayName: string(input.displayName, "displayName")
+    displayName: string(input.displayName, "displayName"),
+    email: string(input.email, "email"),
+    profilePictureUrl: nullableString(input.profilePictureUrl, "profilePictureUrl")
   };
   if (roleValue === "CANDIDATE") {
     return {

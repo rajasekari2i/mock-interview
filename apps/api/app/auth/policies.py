@@ -13,14 +13,22 @@ class Capability(StrEnum):
     CANDIDATE_VIEW_OWN_PROFILE = "CANDIDATE_VIEW_OWN_PROFILE"
     CANDIDATE_VIEW_OWN_ALLOCATIONS = "CANDIDATE_VIEW_OWN_ALLOCATIONS"
     CANDIDATE_JOIN_OWN_INTERVIEW = "CANDIDATE_JOIN_OWN_INTERVIEW"
+    CANDIDATE_VIEW_OWN_INTERVIEWS = "CANDIDATE_VIEW_OWN_INTERVIEWS"
     MANAGER_UPLOAD_JD = "MANAGER_UPLOAD_JD"
     MANAGER_ALLOCATE_INTERVIEW = "MANAGER_ALLOCATE_INTERVIEW"
     MANAGER_VIEW_ALLOCATION_CANDIDATE = "MANAGER_VIEW_ALLOCATION_CANDIDATE"
     MANAGER_VIEW_MANAGED_READINESS = "MANAGER_VIEW_MANAGED_READINESS"
+    MANAGER_VIEW_OWN_JDS = "MANAGER_VIEW_OWN_JDS"
+    MANAGER_CREATE_JD = "MANAGER_CREATE_JD"
+    MANAGER_VIEW_SCHEDULING_CANDIDATES = "MANAGER_VIEW_SCHEDULING_CANDIDATES"
+    MANAGER_SCHEDULE_INTERVIEW = "MANAGER_SCHEDULE_INTERVIEW"
+    MANAGER_VIEW_OWN_INTERVIEWS = "MANAGER_VIEW_OWN_INTERVIEWS"
     ADMIN_MANAGE_USERS = "ADMIN_MANAGE_USERS"
     ADMIN_MANAGE_DOMAIN_MAPPINGS = "ADMIN_MANAGE_DOMAIN_MAPPINGS"
     ADMIN_MANAGE_APPLICATION = "ADMIN_MANAGE_APPLICATION"
     ADMIN_VIEW_ALL_REPORTS = "ADMIN_VIEW_ALL_REPORTS"
+    ADMIN_VIEW_USERS = "ADMIN_VIEW_USERS"
+    ADMIN_VIEW_JDS = "ADMIN_VIEW_JDS"
 
 
 @dataclass(frozen=True)
@@ -52,6 +60,7 @@ _CANDIDATE_CAPABILITIES = frozenset(
         Capability.CANDIDATE_VIEW_OWN_PROFILE,
         Capability.CANDIDATE_VIEW_OWN_ALLOCATIONS,
         Capability.CANDIDATE_JOIN_OWN_INTERVIEW,
+        Capability.CANDIDATE_VIEW_OWN_INTERVIEWS,
     }
 )
 _MANAGER_CAPABILITIES = frozenset(
@@ -60,6 +69,11 @@ _MANAGER_CAPABILITIES = frozenset(
         Capability.MANAGER_ALLOCATE_INTERVIEW,
         Capability.MANAGER_VIEW_ALLOCATION_CANDIDATE,
         Capability.MANAGER_VIEW_MANAGED_READINESS,
+        Capability.MANAGER_VIEW_OWN_JDS,
+        Capability.MANAGER_CREATE_JD,
+        Capability.MANAGER_VIEW_SCHEDULING_CANDIDATES,
+        Capability.MANAGER_SCHEDULE_INTERVIEW,
+        Capability.MANAGER_VIEW_OWN_INTERVIEWS,
     }
 )
 _ROLE_CAPABILITIES = {
@@ -69,9 +83,7 @@ _ROLE_CAPABILITIES = {
 }
 
 
-def authorize(
-    context: AuthContext | None, scope: ResourceScope
-) -> AuthorizationDecision:
+def authorize(context: AuthContext | None, scope: ResourceScope) -> AuthorizationDecision:
     if context is None:
         return AuthorizationDecision(False, "AUTHENTICATION_REQUIRED")
     if context.org_id != scope.org_id:
@@ -93,8 +105,7 @@ def authorize(
     ):
         return AuthorizationDecision(False, "ALLOCATION_MANAGER_MISMATCH")
     if scope.capability is Capability.MANAGER_VIEW_MANAGED_READINESS and (
-        scope.managing_manager_user_id is None
-        or scope.managing_manager_user_id != context.user_id
+        scope.managing_manager_user_id is None or scope.managing_manager_user_id != context.user_id
     ):
         return AuthorizationDecision(False, "MANAGING_MANAGER_MISMATCH")
     return AuthorizationDecision(True, "ALLOWED")

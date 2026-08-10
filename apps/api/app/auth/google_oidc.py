@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol, cast
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 import httpx
 from authlib.jose import JoseError, JsonWebToken  # type: ignore[import-untyped]
@@ -18,6 +18,7 @@ from app.auth.errors import AuthError, ErrorCode
 from app.auth.identifiers import display_name_from_claim, normalize_verified_email
 
 logger = logging.getLogger(__name__)
+OIDC_CLOCK_SKEW_SECONDS = 120
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,7 @@ class GoogleClaims:
     subject: str
     email: str
     name: str | None = None
+    picture: str | None = None
 
 
 class GoogleOIDCProvider(Protocol):
@@ -36,6 +38,28 @@ class GoogleOIDCProvider(Protocol):
     async def exchange(
         self, *, code: str, pkce_verifier: str, expected_nonce_digest: bytes, now: datetime
     ) -> GoogleClaims: ...
+
+
+def _validated_picture_url(value: object) -> str | None:
+    """Return a bounded HTTPS provider image URL or ignore the optional claim."""
+
+    if not isinstance(value, str) or not value or len(value) > 2048:
+        return None
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        return None
+    try:
+        parsed = urlsplit(value)
+        hostname = parsed.hostname
+    except ValueError:
+        return None
+    if (
+        parsed.scheme != "https"
+        or hostname is None
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        return None
+    return value
 
 
 def validate_google_claims(
@@ -56,9 +80,9 @@ def validate_google_claims(
         email = payload["email"]
         verified = payload["email_verified"]
         name = payload.get("name")
+        picture = payload.get("picture")
         issuer_matches = issuer == expected_issuer or (
-            expected_issuer == "https://accounts.google.com"
-            and issuer == "accounts.google.com"
+            expected_issuer == "https://accounts.google.com" and issuer == "accounts.google.com"
         )
         audience_matches = audience == expected_audience or (
             isinstance(audience, list) and expected_audience in audience
@@ -92,6 +116,7 @@ def validate_google_claims(
         subject=cast(str, subject),
         email=normalized_email,
         name=normalized_name,
+        picture=_validated_picture_url(picture),
     )
 
 
@@ -184,7 +209,7 @@ class AuthlibGoogleOIDCAdapter:
                 logger.warning("google_oidc_rejected reason=signature_or_jwk")
                 raise AuthError(ErrorCode.OAUTH_RESPONSE_INVALID) from error
             try:
-                claims.validate(now=now.timestamp())
+                claims.validate(now=now.timestamp(), leeway=OIDC_CLOCK_SKEW_SECONDS)
             except JoseError as error:
                 logger.warning("google_oidc_rejected reason=standard_claim_validation")
                 raise AuthError(ErrorCode.OAUTH_RESPONSE_INVALID) from error

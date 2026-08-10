@@ -89,9 +89,7 @@ async def google_login(request: Request, return_path: str = "/") -> RedirectResp
         database: Database = request.app.state.database
         clock = getattr(request.app.state, "clock", lambda: datetime.now(UTC))
         async with database.transaction() as session:
-            transaction = await oauth_service.create(
-                session, return_path=return_path, now=clock()
-            )
+            transaction = await oauth_service.create(session, return_path=return_path, now=clock())
         state, nonce, challenge = (
             transaction.state,
             transaction.nonce,
@@ -126,9 +124,7 @@ async def google_callback(
     if error is not None:
         location = _frontend_location(
             request,
-            callback_error_redirect(
-                ErrorCode.OAUTH_CANCELLED, correlation_id=correlation_id
-            ),
+            callback_error_redirect(ErrorCode.OAUTH_CANCELLED, correlation_id=correlation_id),
         )
         return RedirectResponse(location, status_code=303, headers={"Cache-Control": "no-store"})
     oauth_service: OAuthTransactionService | None = getattr(
@@ -218,6 +214,8 @@ async def current_user(
         "id": str(context.user.id),
         "organizationId": str(context.user.org_id),
         "displayName": context.user.display_name,
+        "email": context.user.email,
+        "profilePictureUrl": context.user.profile_picture_url,
         "role": context.user.role,
     }
     if context.user.role == Role.CANDIDATE.value:

@@ -1,16 +1,6 @@
-import { expect, test, type Page } from "@playwright/test";
-import axe from "axe-core";
+import { expect, test } from "@playwright/test";
 
-type AxeResult = { violations: { id: string }[] };
-
-async function expectAccessible(page: Page): Promise<void> {
-  await page.addScriptTag({ content: axe.source });
-  const results = await page.evaluate(async () => {
-    const engine = (window as unknown as { axe: { run: () => Promise<AxeResult> } }).axe;
-    return engine.run();
-  });
-  expect(results.violations).toEqual([]);
-}
+import { expectAccessible } from "./support/accessibility";
 
 test("login and safe authentication error views meet automated WCAG checks", async ({ page }) => {
   let error = false;
@@ -57,7 +47,7 @@ test("each role landing and expired-session view has semantics, focus, and no ax
   await page.route("**/api/v1/auth/me", (route) => route.fulfill(response));
   for (const [role, heading] of [
     ["CANDIDATE", "Your allocated interviews"],
-    ["MANAGER", "Manager workspace"],
+    ["MANAGER", "Job descriptions"],
     ["ADMIN", "Application administration"]
   ] as const) {
     response = {
@@ -66,6 +56,8 @@ test("each role landing and expired-session view has semantics, focus, and no ax
           id: "user-1",
           organizationId: "org-1",
           displayName: role,
+          email: `${role.toLowerCase()}@example.test`,
+          profilePictureUrl: null,
           role,
           ...(role === "CANDIDATE" ? { candidateProfileId: "profile-1" } : {})
         },
@@ -74,6 +66,10 @@ test("each role landing and expired-session view has semantics, focus, and no ax
     };
     await page.goto("/");
     await expect(page.getByRole("heading", { name: heading })).toBeFocused();
+    await page.getByRole("button", { name: "Open profile menu" }).click();
+    await expect(page.getByRole("link", { name: "Profile" })).toBeVisible();
+    await expectAccessible(page);
+    await page.keyboard.press("Escape");
     await expectAccessible(page);
   }
   response = {
@@ -112,6 +108,8 @@ test("mapping denial, revoked session, and fresh sign-in recovery remain accessi
                 id: "candidate-1",
                 organizationId: "target-org",
                 displayName: "Candidate",
+                email: "candidate@example.test",
+                profilePictureUrl: null,
                 role: "CANDIDATE",
                 candidateProfileId: "profile-1"
               },

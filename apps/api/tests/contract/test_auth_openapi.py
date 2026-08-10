@@ -30,6 +30,10 @@ def validate_sample(document: dict[str, object], schema: dict[str, object], valu
     if "$ref" in schema:
         validate_sample(document, resolve(document, cast(str, schema["$ref"])), value)
         return
+    if "allOf" in schema:
+        for option in cast(list[dict[str, object]], schema["allOf"]):
+            validate_sample(document, option, value)
+        return
     if "oneOf" in schema:
         options = cast(list[dict[str, object]], schema["oneOf"])
         valid = 0
@@ -82,6 +86,8 @@ def test_openapi_document_and_every_local_reference_are_executable(
             "id": "10000000-0000-0000-0000-000000000001",
             "organizationId": "20000000-0000-0000-0000-000000000001",
             "displayName": "Candidate",
+            "email": "candidate@example.test",
+            "profilePictureUrl": None,
             "role": "CANDIDATE",
             "candidateProfileId": "30000000-0000-0000-0000-000000000001",
         },
@@ -89,18 +95,22 @@ def test_openapi_document_and_every_local_reference_are_executable(
             "id": "10000000-0000-0000-0000-000000000002",
             "organizationId": "20000000-0000-0000-0000-000000000001",
             "displayName": "Manager",
+            "email": "manager@example.test",
+            "profilePictureUrl": "https://lh3.googleusercontent.com/manager",
             "role": "MANAGER",
         },
         {
             "id": "10000000-0000-0000-0000-000000000003",
             "organizationId": "20000000-0000-0000-0000-000000000001",
             "displayName": "Admin",
+            "email": "admin@example.test",
+            "profilePictureUrl": None,
             "role": "ADMIN",
         },
     ],
 )
 def test_current_user_one_of_samples_validate_exactly_one_role(
-    contract: dict[str, object], user: dict[str, str]
+    contract: dict[str, object], user: dict[str, object]
 ) -> None:
     response = {
         "user": user,

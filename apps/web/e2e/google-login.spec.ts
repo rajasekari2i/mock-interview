@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 const users = [
   ["CANDIDATE", "Your allocated interviews"],
-  ["MANAGER", "Manager workspace"],
+  ["MANAGER", "Job descriptions"],
   ["ADMIN", "Application administration"]
 ] as const;
 
@@ -15,6 +15,8 @@ for (const [role, heading] of users) {
             id: "10000000-0000-0000-0000-000000000001",
             organizationId: "20000000-0000-0000-0000-000000000001",
             displayName: role,
+            email: `${role.toLowerCase()}@example.test`,
+            profilePictureUrl: null,
             role,
             ...(role === "CANDIDATE" ? { candidateProfileId: "profile-1" } : {})
           },
@@ -83,6 +85,8 @@ test("reassignment rejects the old session and fresh login reaches the target te
           id: "10000000-0000-0000-0000-000000000001",
           organizationId: "20000000-0000-0000-0000-000000000099",
           displayName: "Migrated Candidate",
+          email: "candidate@example.test",
+          profilePictureUrl: null,
           role: "CANDIDATE",
           candidateProfileId: "profile-1"
         },
@@ -98,4 +102,41 @@ test("reassignment rejects the old session and fresh login reaches the target te
   freshLogin = true;
   await page.reload();
   await expect(page.getByRole("heading", { name: "Your allocated interviews" })).toBeVisible();
+});
+
+test("profile disclosure, fallback, profile page, and logout form one keyboard flow", async ({
+  page
+}) => {
+  await page.route("**/api/v1/auth/me", (route) =>
+    route.fulfill({
+      json: {
+        user: {
+          id: "manager-1",
+          organizationId: "org-1",
+          displayName: "Grace Hopper",
+          email: "grace@example.test",
+          profilePictureUrl: null,
+          role: "MANAGER"
+        },
+        session: { absoluteExpiresAt: "later", idleExpiresAt: "soon" }
+      }
+    })
+  );
+  await page.route("**/api/v1/auth/logout", (route) => route.fulfill({ status: 204 }));
+  await page.goto("/");
+
+  const trigger = page.getByRole("button", { name: "Open profile menu" });
+  await trigger.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByText("GH")).toBeVisible();
+  await page.getByRole("link", { name: "Profile" }).click();
+  await expect(page.getByRole("heading", { name: "Your profile" })).toBeFocused();
+  await expect(page.getByText("grace@example.test")).toBeVisible();
+
+  await trigger.click();
+  await page.keyboard.press("Escape");
+  await expect(trigger).toBeFocused();
+  await trigger.click();
+  await page.getByRole("button", { name: "Logout" }).click();
+  await expect(page.getByRole("heading", { name: "Sign in to MockInterview" })).toBeFocused();
 });

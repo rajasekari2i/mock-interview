@@ -8,5 +8,12 @@
     "strict": true,
     "noEmit": true
   },
-  "include": ["vite.config.ts", "eslint.config.js", "playwright.config.ts", "e2e/**/*.ts"]
+  "include": [
+    "vite.config.ts",
+    "eslint.config.js",
+    "playwright.config.ts",
+    "playwright.performance.config.ts",
+    "e2e/**/*.ts",
+    "performance/**/*.ts"
+  ]
 }

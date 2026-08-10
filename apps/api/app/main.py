@@ -16,12 +16,18 @@ from app.core.config import AppEnvironment, Settings
 from app.core.database import Database
 from app.core.observability import AuthMetricsMiddleware, CorrelationMiddleware, get_correlation_id
 from app.core.security_headers import ProtectedResponseHeadersMiddleware
+from app.interviews.candidate_router import router as candidate_interview_router
+from app.interviews.manager_router import router as manager_interview_router
+from app.interviews.tenancy import ScheduledInterviewTenantMigrationParticipant
+from app.jds.router import router as manager_jd_router
 from app.tenancy.coordinator import CandidateTenantMigrationCoordinator
 
 
 def create_app(*, testing: bool = False, settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="MockInterview Authentication API", version="0.1.0")
-    app.state.candidate_tenant_migration_coordinator = CandidateTenantMigrationCoordinator()
+    app.state.candidate_tenant_migration_coordinator = CandidateTenantMigrationCoordinator(
+        (ScheduledInterviewTenantMigrationParticipant(),)
+    )
     origins = (
         settings.frontend_origins
         if settings is not None
@@ -35,7 +41,12 @@ def create_app(*, testing: bool = False, settings: Settings | None = None) -> Fa
         allow_origins=origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PATCH", "DELETE"],
-        allow_headers=["Content-Type", "X-CSRF-Token", "X-Correlation-ID"],
+        allow_headers=[
+            "Content-Type",
+            "X-CSRF-Token",
+            "X-Correlation-ID",
+            "Idempotency-Key",
+        ],
     )
     if settings is None:
         app.state.session_cookie_policy = SessionCookiePolicy.development("mi_session_test")
@@ -78,6 +89,9 @@ def create_app(*, testing: bool = False, settings: Settings | None = None) -> Fa
 
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(admin_router, prefix="/api/v1")
+    app.include_router(candidate_interview_router, prefix="/api/v1")
+    app.include_router(manager_interview_router, prefix="/api/v1")
+    app.include_router(manager_jd_router, prefix="/api/v1")
     return app
 
 

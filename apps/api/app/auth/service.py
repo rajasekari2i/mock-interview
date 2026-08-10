@@ -49,13 +49,11 @@ async def _find_identity(
                 ExternalLoginIdentity.issuer == claims.issuer,
                 ExternalLoginIdentity.subject == claims.subject,
             )
-        )
+        ),
     )
 
 
-async def _find_preprovisioned_users(
-    session: AsyncSession, normalized_email: str
-) -> list[User]:
+async def _find_preprovisioned_users(session: AsyncSession, normalized_email: str) -> list[User]:
     return list(
         (
             await session.scalars(
@@ -74,6 +72,7 @@ async def _bind_preprovisioned_user(
     correlation_id: str,
 ) -> User:
     user = await _validate_login_user(session, user)
+    _refresh_verified_profile(user, claims, now=now)
     already_bound = await session.scalar(
         select(ExternalLoginIdentity).where(
             ExternalLoginIdentity.user_id == user.id,
@@ -108,6 +107,13 @@ async def _bind_preprovisioned_user(
         metadata={"provider": "GOOGLE"},
     )
     return user
+
+
+def _refresh_verified_profile(user: User, claims: GoogleClaims, *, now: datetime) -> None:
+    _, _, local_part = normalize_verified_email(claims.email)
+    user.display_name = display_name_from_claim(claims.name, fallback=local_part)
+    user.profile_picture_url = claims.picture
+    user.updated_at = now
 
 
 async def _validate_login_user(session: AsyncSession, user: User) -> User:
@@ -158,7 +164,9 @@ async def resolve_or_bind_identity(
             )
         identity.email_snapshot = normalized_email
         identity.last_authenticated_at = now
-        return await _validate_login_user(session, user)
+        user = await _validate_login_user(session, user)
+        _refresh_verified_profile(user, claims, now=now)
+        return user
 
     candidates = await _find_preprovisioned_users(session, normalized_email)
     if len(candidates) != 1:
@@ -179,7 +187,9 @@ async def resolve_or_bind_identity(
         concurrent_user = await session.get(User, concurrent_identity.user_id)
         if concurrent_user is None:
             raise AuthError(ErrorCode.IDENTITY_CONFLICT)
-        return await _validate_login_user(session, concurrent_user)
+        concurrent_user = await _validate_login_user(session, concurrent_user)
+        _refresh_verified_profile(concurrent_user, claims, now=now)
+        return concurrent_user
     concurrent_candidates = await _find_preprovisioned_users(session, normalized_email)
     if len(concurrent_candidates) == 1:
         return await _bind_preprovisioned_user(
@@ -209,6 +219,7 @@ async def resolve_or_bind_identity(
         email=normalized_email,
         normalized_email=normalized_email.casefold(),
         display_name=display_name_from_claim(claims.name, fallback=local_part),
+        profile_picture_url=claims.picture,
         role=Role.CANDIDATE.value,
         status=EntityStatus.ACTIVE.value,
         auth_generation=1,

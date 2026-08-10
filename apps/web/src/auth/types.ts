@@ -4,6 +4,8 @@ interface UserBase {
   id: string;
   organizationId: string;
   displayName: string;
+  email: string;
+  profilePictureUrl: string | null;
 }
 
 export interface CandidateUser extends UserBase {

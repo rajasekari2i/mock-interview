@@ -9,9 +9,7 @@ from app.tenancy.coordinator import CandidateTenantMigrationCoordinator
 
 
 class Participant:
-    def __init__(
-        self, name: str, calls: list[tuple[str, object]], *, fail: bool = False
-    ) -> None:
+    def __init__(self, name: str, calls: list[tuple[str, object]], *, fail: bool = False) -> None:
         self.name = name
         self.calls = calls
         self.fail = fail
@@ -44,9 +42,7 @@ class Participant:
 def test_registry_rejects_duplicate_or_empty_participant_names() -> None:
     calls: list[tuple[str, object]] = []
     with pytest.raises(ValueError):
-        CandidateTenantMigrationCoordinator(
-            (Participant("dup", calls), Participant("dup", calls))
-        )
+        CandidateTenantMigrationCoordinator((Participant("dup", calls), Participant("dup", calls)))
     with pytest.raises(ValueError):
         CandidateTenantMigrationCoordinator((Participant("", calls),))
 

@@ -56,6 +56,32 @@ async def require_admin(
     return context
 
 
+async def require_candidate(
+    context: Annotated[AuthenticatedRequest, Depends(authenticated_request)],
+) -> AuthenticatedRequest:
+    if context.user.role != Role.CANDIDATE.value:
+        raise AuthError(ErrorCode.FORBIDDEN)
+    return context
+
+
+async def require_manager(
+    context: Annotated[AuthenticatedRequest, Depends(authenticated_request)],
+) -> AuthenticatedRequest:
+    if context.user.role != Role.MANAGER.value:
+        raise AuthError(ErrorCode.FORBIDDEN)
+    return context
+
+
+async def require_manager_or_admin(
+    context: Annotated[AuthenticatedRequest, Depends(authenticated_request)],
+) -> AuthenticatedRequest:
+    """Allow shared JD creation to Managers and Admins only."""
+
+    if context.user.role not in {Role.MANAGER.value, Role.ADMIN.value}:
+        raise AuthError(ErrorCode.FORBIDDEN)
+    return context
+
+
 async def require_domain_mapping_admin(
     request: Request,
     context: Annotated[AuthenticatedRequest, Depends(authenticated_request)],
@@ -70,9 +96,7 @@ async def require_domain_mapping_admin(
         await append_authorization_denial(
             audit_session,
             reason_code="CAPABILITY_DENIED",
-            correlation_id=getattr(
-                request.state, "correlation_id", get_correlation_id()
-            ),
+            correlation_id=getattr(request.state, "correlation_id", get_correlation_id()),
             occurred_at=clock(),
             org_id=context.user.org_id,
             actor_user_id=context.user.id,

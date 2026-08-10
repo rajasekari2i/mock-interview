@@ -38,6 +38,8 @@ describe("protected routes", () => {
           id: "1",
           organizationId: "2",
           displayName: "Admin",
+          email: "admin@example.test",
+          profilePictureUrl: null,
           role: "ADMIN"
         },
         session: { absoluteExpiresAt: "later", idleExpiresAt: "soon" }

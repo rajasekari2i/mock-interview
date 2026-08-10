@@ -11,14 +11,7 @@ def canonicalize_domain(value: str) -> str:
     """Return one exact lower-case IDNA domain or reject ambiguous syntax."""
 
     raw = value.strip()
-    if (
-        not raw
-        or len(raw) > 253
-        or raw.endswith(".")
-        or "@" in raw
-        or "://" in raw
-        or "*" in raw
-    ):
+    if not raw or len(raw) > 253 or raw.endswith(".") or "@" in raw or "://" in raw or "*" in raw:
         raise ValueError("Invalid domain")
     labels = raw.split(".")
     if len(labels) < 2 or any(not label for label in labels):

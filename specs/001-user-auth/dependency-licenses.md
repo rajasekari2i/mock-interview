@@ -16,6 +16,9 @@ Approved license expressions: `MIT`, `BSD-3-Clause`, `Apache-2.0`,
 | fastapi | MIT | runtime | Typed HTTP application boundary |
 | psycopg | LGPL-3.0-only | runtime | PostgreSQL async driver |
 | pydantic-settings | MIT | runtime | Typed environment validation |
+| pypdf | BSD-3-Clause | runtime | Bounded PDF text extraction behind the JD document adapter |
+| python-docx | MIT | runtime | Bounded DOCX text extraction behind the JD document adapter |
+| python-multipart | Apache-2.0 | runtime | Standards-based multipart upload parsing for JD documents |
 | sqlalchemy | MIT | runtime | Typed relational persistence |
 | uvicorn | BSD-3-Clause | runtime | ASGI server |
 | setuptools | MIT | build | Standards-based Python package build backend |
@@ -29,6 +32,8 @@ Approved license expressions: `MIT`, `BSD-3-Clause`, `Apache-2.0`,
 | react | MIT | runtime | UI framework |
 | react-dom | MIT | runtime | Browser renderer |
 | react-router-dom | MIT | runtime | Role-aware routing |
+| tailwindcss | MIT | tooling | Utility-first styling for the responsive application UI |
+| @tailwindcss/vite | MIT | tooling | Tailwind CSS integration with the Vite build pipeline |
 | vite | MIT | tooling | Frontend build and development server |
 | vitest | MIT | test | Frontend unit and coverage runner |
 | @vitest/coverage-v8 | MIT | test | V8 coverage integration |
@@ -43,6 +48,7 @@ Approved license expressions: `MIT`, `BSD-3-Clause`, `Apache-2.0`,
 | eslint | MIT | tooling | TypeScript/React linting |
 | globals | MIT | tooling | Browser and Node lint globals |
 | jsdom | MIT | test | Component DOM test environment |
+| lxml | BSD-3-Clause | transitive runtime | XML engine required by the reviewed python-docx adapter |
 | typescript | Apache-2.0 | tooling | Strict TypeScript checking |
 | typescript-eslint | MIT | tooling | Type-aware TypeScript linting |
 | @vitejs/plugin-react | MIT | tooling | React compilation for Vite |

@@ -31,7 +31,11 @@ async def test_authenticated_me_and_all_admin_mutation_routes(
     db_session: AsyncSession, factories: object, clock: object
 ) -> None:
     organization = factories.organization()
-    admin = factories.user(organization=organization, role=Role.ADMIN.value)
+    admin = factories.user(
+        organization=organization,
+        role=Role.ADMIN.value,
+        profile_picture_url="https://images.example.test/admin.png",
+    )
     target = factories.user(organization=organization)
     db_session.add_all([organization, admin, target])
     await db_session.flush()
@@ -67,6 +71,8 @@ async def test_authenticated_me_and_all_admin_mutation_routes(
         )
 
     assert current.json()["user"]["role"] == "ADMIN"
+    assert current.json()["user"]["email"] == admin.email
+    assert current.json()["user"]["profilePictureUrl"] == admin.profile_picture_url
     assert provisioned.status_code == 201, provisioned.text
     assert provisioned.json()["candidateProfileId"] is not None
     assert role_changed.json()["role"] == "CANDIDATE"
@@ -108,6 +114,8 @@ async def test_candidate_me_includes_profile_and_non_admin_is_forbidden(
 
     assert current.json()["user"]["candidateProfileId"] == str(profile.id)
     assert forbidden.status_code == 403
+    assert current.json()["user"]["email"] == candidate.email
+    assert current.json()["user"]["profilePictureUrl"] is None
 
 
 @pytest.mark.asyncio

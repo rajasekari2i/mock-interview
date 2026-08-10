@@ -22,4 +22,19 @@ if (typeof window !== "undefined") {
       dispatchEvent: vi.fn(() => false)
     }))
   });
+
+  Object.defineProperties(window.HTMLDialogElement.prototype, {
+    showModal: {
+      configurable: true,
+      value(this: HTMLDialogElement) {
+        this.setAttribute("open", "");
+      }
+    },
+    close: {
+      configurable: true,
+      value(this: HTMLDialogElement) {
+        this.removeAttribute("open");
+      }
+    }
+  });
 }

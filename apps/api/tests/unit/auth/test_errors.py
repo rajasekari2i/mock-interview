@@ -27,6 +27,9 @@ EXPECTED = {
     ErrorCode.CANDIDATE_PROFILE_CONFLICT: (409, RecoveryAction.CONTACT_ADMIN),
     ErrorCode.VALIDATION_ERROR: (400, RecoveryAction.RETRY),
     ErrorCode.RESOURCE_NOT_FOUND: (404, RecoveryAction.GO_TO_ROLE_HOME),
+    ErrorCode.IDEMPOTENCY_CONFLICT: (409, RecoveryAction.RETRY),
+    ErrorCode.UPLOAD_TOO_LARGE: (413, RecoveryAction.RETRY),
+    ErrorCode.UNSUPPORTED_DOCUMENT: (415, RecoveryAction.RETRY),
 }
 
 

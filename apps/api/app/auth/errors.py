@@ -30,6 +30,9 @@ class ErrorCode(StrEnum):
     CANDIDATE_PROFILE_CONFLICT = "CANDIDATE_PROFILE_CONFLICT"
     VALIDATION_ERROR = "VALIDATION_ERROR"
     RESOURCE_NOT_FOUND = "RESOURCE_NOT_FOUND"
+    IDEMPOTENCY_CONFLICT = "IDEMPOTENCY_CONFLICT"
+    UPLOAD_TOO_LARGE = "UPLOAD_TOO_LARGE"
+    UNSUPPORTED_DOCUMENT = "UNSUPPORTED_DOCUMENT"
 
 
 @dataclass(frozen=True)
@@ -79,6 +82,15 @@ ERROR_DEFINITIONS: dict[ErrorCode, ErrorDefinition] = {
     ),
     ErrorCode.RESOURCE_NOT_FOUND: ErrorDefinition(
         404, RecoveryAction.GO_TO_ROLE_HOME, "The requested resource is unavailable."
+    ),
+    ErrorCode.IDEMPOTENCY_CONFLICT: ErrorDefinition(
+        409, RecoveryAction.RETRY, "This request key was already used for another interview."
+    ),
+    ErrorCode.UPLOAD_TOO_LARGE: ErrorDefinition(
+        413, RecoveryAction.RETRY, "Choose a document no larger than 5 MiB."
+    ),
+    ErrorCode.UNSUPPORTED_DOCUMENT: ErrorDefinition(
+        415, RecoveryAction.RETRY, "Choose a readable PDF, DOCX, or UTF-8 text document."
     ),
 }
 

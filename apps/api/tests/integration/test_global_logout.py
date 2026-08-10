@@ -5,8 +5,9 @@ from contextlib import asynccontextmanager
 
 import httpx
 import pytest
+from app.auth.errors import AuthError, ErrorCode
 from app.auth.models import AuthenticationSession, RevocationReason
-from app.auth.sessions import create_session
+from app.auth.sessions import create_session, resolve_session
 from app.main import create_app
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,15 +49,21 @@ async def test_global_logout_revokes_two_sessions_and_clears_both_cookies(
     assert response.headers["cache-control"] == "no-store"
     assert response.headers.get_list("set-cookie")[0].startswith("mi_session_test=")
     assert any(cookie.startswith("mi_csrf=") for cookie in response.headers.get_list("set-cookie"))
-    assert await db_session.scalar(
-        select(func.count())
-        .select_from(AuthenticationSession)
-        .where(
-            AuthenticationSession.user_id == user.id,
-            AuthenticationSession.revocation_reason == RevocationReason.LOGOUT_ALL.value,
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(AuthenticationSession)
+            .where(
+                AuthenticationSession.user_id == user.id,
+                AuthenticationSession.revocation_reason == RevocationReason.LOGOUT_ALL.value,
+            )
         )
-    ) == 2
+        == 2
+    )
     assert second.record.revoked_at == clock.now()
+    with pytest.raises(AuthError) as old_session:
+        await resolve_session(db_session, first.token, now=clock.now())
+    assert old_session.value.code is ErrorCode.SESSION_REVOKED
 
 
 @pytest.mark.asyncio

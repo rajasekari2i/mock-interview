@@ -1,0 +1,808 @@
+openapi: 3.1.0
+info:
+  title: MockInterview Role-Based Interview Management API
+  version: 0.2.0
+  description: >-
+    Executable feature contract for authenticated profile data, Candidate interview allocations,
+    Manager-owned JDs and scheduling, shared Manager/Admin JD creation, and Admin user/JD pagination. All paths are relative to
+    /api/v1. Authorization is server-enforced and every response carries X-Correlation-ID.
+servers:
+  - url: /api/v1
+security:
+  - sessionCookie: []
+
+paths:
+  /auth/me:
+    get:
+      operationId: getCurrentUser
+      summary: Return the authenticated user, profile identity, and session lifetime
+      responses:
+        "200":
+          description: Authenticated current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUserResponse"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /candidate/interviews:
+    get:
+      operationId: listCandidateInterviews
+      summary: List only the authenticated Candidate's allocated interviews
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Candidate-owned interview page ordered by scheduledAt then id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CandidateInterviewPage"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /manager/job-descriptions:
+    get:
+      operationId: listManagerJobDescriptions
+      summary: List JDs created by the authenticated Manager
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Manager-owned JD page ordered by creation time then id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagerJobDescriptionPage"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: createManualJobDescription
+      summary: Create one manual JD as an authenticated Manager or Admin
+      parameters:
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateManualJobDescriptionRequest"
+      responses:
+        "201":
+          description: Manual JD created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagerJobDescription"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /manager/job-descriptions/upload:
+    post:
+      operationId: uploadJobDescription
+      summary: Validate, extract, and persist one uploaded JD as an authenticated Manager or Admin
+      description: >-
+        Accepts PDF, DOCX, or UTF-8 TXT up to 5 MiB. The original bytes and filename are discarded
+        after bounded validation and text extraction and are never available for download.
+      parameters:
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [title, document]
+              properties:
+                title:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                document:
+                  type: string
+                  format: binary
+            encoding:
+              document:
+                contentType: application/pdf, application/vnd.openxmlformats-officedocument.wordprocessingml.document, text/plain
+      responses:
+        "201":
+          description: Uploaded JD extracted and created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagerJobDescription"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/UploadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedDocument"
+
+  /manager/candidates:
+    get:
+      operationId: listManagerSchedulingCandidates
+      summary: List minimum identity for active same-organization Candidates
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Candidate selection page ordered by display name then id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagerCandidatePage"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /manager/interviews:
+    get:
+      operationId: listManagerScheduledInterviews
+      summary: List interviews scheduled by the authenticated Manager
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Manager-owned scheduled-interview page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagerInterviewPage"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: scheduleInterview
+      summary: Atomically schedule one Candidate interview using a Manager-owned JD
+      description: >-
+        The Candidate must be active and in the Manager's organization. The JD must belong to the
+        authenticated Manager. A first successful key returns 201; an identical replay returns
+        200 and the original interview. Reusing a key with different input returns 409.
+      parameters:
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/CsrfToken"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScheduleInterviewRequest"
+      responses:
+        "200":
+          description: Identical request replay; no duplicate interview or audit created
+          headers:
+            Idempotency-Replayed:
+              schema:
+                type: boolean
+                const: true
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagerInterview"
+        "201":
+          description: Interview created and allocated to the selected Candidate
+          headers:
+            Idempotency-Replayed:
+              schema:
+                type: boolean
+                const: false
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ManagerInterview"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /admin/users:
+    get:
+      operationId: listAdminUsers
+      summary: List all application users using deterministic server pagination
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Application-wide user page ordered by creation time then id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUserPage"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /admin/users/{user_id}:
+    parameters:
+      - $ref: "#/components/parameters/UserId"
+    get:
+      operationId: getAdminUserDetails
+      summary: Return available details for one selected application user
+      responses:
+        "200":
+          description: Selected user details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUserDetails"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /admin/users/{user_id}/role:
+    parameters:
+      - $ref: "#/components/parameters/UserId"
+    patch:
+      operationId: changeAdminUserRole
+      summary: Assign Candidate, Manager, or Admin and revoke the user's existing sessions
+      parameters:
+        - $ref: "#/components/parameters/Origin"
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [role]
+              properties:
+                role:
+                  $ref: "#/components/schemas/Role"
+      responses:
+        "200":
+          description: Role retained or changed; an actual change invalidates all old sessions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminUserDetails"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /admin/job-descriptions:
+    get:
+      operationId: listAdminJobDescriptions
+      summary: List all application JDs without confidential content
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Application-wide JD page ordered by creation time then id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminJobDescriptionPage"
+        "401":
+          $ref: "#/components/responses/AuthenticationRequired"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-mi_session
+      description: Opaque HttpOnly Secure host-only application session cookie.
+
+  parameters:
+    Page:
+      name: page
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      name: pageSize
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 25
+    UserId:
+      name: user_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    Origin:
+      name: Origin
+      in: header
+      required: true
+      schema:
+        type: string
+        format: uri
+      description: Exact approved frontend origin; wildcard and missing origins are denied.
+    CsrfToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 32
+        maxLength: 256
+      description: Must match the readable CSRF cookie and server-side session digest.
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Opaque per-intent key; stored and logged only as a one-way digest.
+
+  schemas:
+    Role:
+      type: string
+      enum: [CANDIDATE, MANAGER, ADMIN]
+    UserStatus:
+      type: string
+      enum: [ACTIVE, DISABLED]
+    JobDescriptionSourceType:
+      type: string
+      enum: [MANUAL, UPLOAD]
+    JobDescriptionFormat:
+      type: [string, "null"]
+      enum: [PDF, DOCX, TXT, null]
+    InterviewStatus:
+      type: string
+      enum: [SCHEDULED]
+
+    UserBase:
+      type: object
+      required: [id, organizationId, displayName, email, profilePictureUrl, role]
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 200
+        email:
+          type: string
+          format: email
+          maxLength: 320
+        profilePictureUrl:
+          type: [string, "null"]
+          format: uri
+        role:
+          $ref: "#/components/schemas/Role"
+    CandidateCurrentUser:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/UserBase"
+        - type: object
+          required: [role, candidateProfileId]
+          properties:
+            role:
+              const: CANDIDATE
+            candidateProfileId:
+              type: string
+              format: uuid
+    ManagerCurrentUser:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/UserBase"
+        - type: object
+          required: [role]
+          properties:
+            role:
+              const: MANAGER
+    AdminCurrentUser:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/UserBase"
+        - type: object
+          required: [role]
+          properties:
+            role:
+              const: ADMIN
+    CurrentUser:
+      oneOf:
+        - $ref: "#/components/schemas/CandidateCurrentUser"
+        - $ref: "#/components/schemas/ManagerCurrentUser"
+        - $ref: "#/components/schemas/AdminCurrentUser"
+      discriminator:
+        propertyName: role
+        mapping:
+          CANDIDATE: "#/components/schemas/CandidateCurrentUser"
+          MANAGER: "#/components/schemas/ManagerCurrentUser"
+          ADMIN: "#/components/schemas/AdminCurrentUser"
+    SessionSummary:
+      type: object
+      additionalProperties: false
+      required: [absoluteExpiresAt, idleExpiresAt]
+      properties:
+        absoluteExpiresAt:
+          type: string
+          format: date-time
+        idleExpiresAt:
+          type: string
+          format: date-time
+    CurrentUserResponse:
+      type: object
+      additionalProperties: false
+      required: [user, session]
+      properties:
+        user:
+          $ref: "#/components/schemas/CurrentUser"
+        session:
+          $ref: "#/components/schemas/SessionSummary"
+
+    PageMetadata:
+      type: object
+      required: [page, pageSize, totalItems, totalPages]
+      properties:
+        page:
+          type: integer
+          minimum: 1
+        pageSize:
+          type: integer
+          minimum: 1
+          maximum: 100
+        totalItems:
+          type: integer
+          minimum: 0
+        totalPages:
+          type: integer
+          minimum: 0
+
+    JobDescriptionSummary:
+      type: object
+      required: [id, title]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+    ManagerJobDescription:
+      allOf:
+        - $ref: "#/components/schemas/JobDescriptionSummary"
+        - type: object
+          required: [sourceType, sourceFormat, createdAt]
+          properties:
+            sourceType:
+              $ref: "#/components/schemas/JobDescriptionSourceType"
+            sourceFormat:
+              $ref: "#/components/schemas/JobDescriptionFormat"
+            createdAt:
+              type: string
+              format: date-time
+    CreateManualJobDescriptionRequest:
+      type: object
+      additionalProperties: false
+      required: [title, content]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        content:
+          type: string
+          minLength: 1
+          maxLength: 500000
+    ManagerJobDescriptionPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMetadata"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/ManagerJobDescription"
+
+    CandidateSelection:
+      type: object
+      additionalProperties: false
+      required: [id, displayName, email]
+      properties:
+        id:
+          type: string
+          format: uuid
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 200
+        email:
+          type: string
+          format: email
+    ManagerCandidatePage:
+      allOf:
+        - $ref: "#/components/schemas/PageMetadata"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/CandidateSelection"
+
+    CandidateInterview:
+      type: object
+      additionalProperties: false
+      required: [id, jobDescription, scheduledAt, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        jobDescription:
+          $ref: "#/components/schemas/JobDescriptionSummary"
+        scheduledAt:
+          type: string
+          format: date-time
+        status:
+          $ref: "#/components/schemas/InterviewStatus"
+    CandidateInterviewPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMetadata"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/CandidateInterview"
+
+    ManagerInterview:
+      type: object
+      additionalProperties: false
+      required: [id, candidate, jobDescription, scheduledAt, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        candidate:
+          $ref: "#/components/schemas/CandidateSelection"
+        jobDescription:
+          $ref: "#/components/schemas/JobDescriptionSummary"
+        scheduledAt:
+          type: string
+          format: date-time
+        status:
+          $ref: "#/components/schemas/InterviewStatus"
+    ManagerInterviewPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMetadata"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/ManagerInterview"
+    ScheduleInterviewRequest:
+      type: object
+      additionalProperties: false
+      required: [candidateId, jobDescriptionId, scheduledAt]
+      properties:
+        candidateId:
+          type: string
+          format: uuid
+        jobDescriptionId:
+          type: string
+          format: uuid
+        scheduledAt:
+          type: string
+          format: date-time
+          description: Must include an explicit UTC offset and represent a future instant.
+
+    AdminUser:
+      type: object
+      required: [id, organizationId, displayName, email, role, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 200
+        email:
+          type: string
+          format: email
+        role:
+          $ref: "#/components/schemas/Role"
+        status:
+          $ref: "#/components/schemas/UserStatus"
+    AdminUserDetails:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/AdminUser"
+        - type: object
+          required: [profilePictureUrl, candidateProfileId]
+          properties:
+            profilePictureUrl:
+              type: [string, "null"]
+              format: uri
+            candidateProfileId:
+              type: [string, "null"]
+              format: uuid
+    AdminUserPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMetadata"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/AdminUser"
+
+    AdminJobDescription:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/ManagerJobDescription"
+        - type: object
+          required: [organizationId, createdBy]
+          properties:
+            organizationId:
+              type: string
+              format: uuid
+            createdBy:
+              type: object
+              additionalProperties: false
+              required: [id, displayName]
+              properties:
+                id:
+                  type: string
+                  format: uuid
+                displayName:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+    AdminJobDescriptionPage:
+      allOf:
+        - $ref: "#/components/schemas/PageMetadata"
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: "#/components/schemas/AdminJobDescription"
+
+    ErrorCode:
+      type: string
+      enum:
+        - AUTHENTICATION_REQUIRED
+        - SESSION_EXPIRED
+        - SESSION_REVOKED
+        - ACCOUNT_DISABLED
+        - FORBIDDEN
+        - CSRF_DENIED
+        - VALIDATION_ERROR
+        - RESOURCE_NOT_FOUND
+        - IDENTITY_CONFLICT
+        - IDEMPOTENCY_CONFLICT
+        - UPLOAD_TOO_LARGE
+        - UNSUPPORTED_DOCUMENT
+    RecoveryAction:
+      type: string
+      enum: [SIGN_IN_AGAIN, CONTACT_ADMIN, RETRY, GO_TO_ROLE_HOME]
+    ErrorBody:
+      type: object
+      additionalProperties: false
+      required: [code, recovery, message, correlationId]
+      properties:
+        code:
+          $ref: "#/components/schemas/ErrorCode"
+        recovery:
+          $ref: "#/components/schemas/RecoveryAction"
+        message:
+          type: string
+        correlationId:
+          type: string
+          minLength: 1
+          maxLength: 100
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorBody"
+
+  responses:
+    InvalidRequest:
+      description: Missing, malformed, past-time, blank, or otherwise invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    AuthenticationRequired:
+      description: Missing, expired, revoked, or invalid application session
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Forbidden:
+      description: Current role, Origin, or CSRF evidence does not permit the operation
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    NotFound:
+      description: Resource unavailable; ownership and cross-tenant existence are not disclosed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    Conflict:
+      description: Identity, role-transition, tenant-migration, or idempotency invariant conflict
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    UploadTooLarge:
+      description: Uploaded stream exceeds the 5 MiB limit
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+    UnsupportedDocument:
+      description: File format, signature, encryption, structure, or extractable content is unsupported
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"

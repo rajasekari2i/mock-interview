@@ -69,3 +69,22 @@ async def test_credentialed_cors_uses_an_exact_origin_allowlist() -> None:
     assert allowed.headers["access-control-allow-origin"] == "http://localhost:5173"
     assert allowed.headers["access-control-allow-credentials"] == "true"
     assert "access-control-allow-origin" not in denied.headers
+
+
+@pytest.mark.asyncio
+async def test_credentialed_cors_allows_every_feature_mutation_header() -> None:
+    transport = httpx.ASGITransport(app=create_app(testing=True))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.options(
+            "/api/v1/manager/interviews",
+            headers={
+                "Origin": "http://localhost:5173",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": ("Content-Type, X-CSRF-Token, Idempotency-Key"),
+            },
+        )
+
+    allowed = {
+        item.strip().lower() for item in response.headers["access-control-allow-headers"].split(",")
+    }
+    assert {"content-type", "x-csrf-token", "idempotency-key"} <= allowed

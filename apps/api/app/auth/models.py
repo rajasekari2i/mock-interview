@@ -72,9 +72,7 @@ class Organization(TimestampMixin, Base):
         CheckConstraint("status IN ('ACTIVE', 'DISABLED')", name="ck_organizations_status"),
     )
 
-    id: Mapped[UUID] = mapped_column(
-        PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
-    )
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     slug: Mapped[str] = mapped_column(String(100), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -91,9 +89,7 @@ class OrganizationDomainMapping(TimestampMixin, Base):
         ),
     )
 
-    id: Mapped[UUID] = mapped_column(
-        PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
-    )
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
     org_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True),
         ForeignKey(
@@ -115,16 +111,10 @@ class User(TimestampMixin, Base):
         CheckConstraint("role IN ('CANDIDATE', 'MANAGER', 'ADMIN')", name="ck_users_role"),
         CheckConstraint("status IN ('ACTIVE', 'DISABLED')", name="ck_users_status"),
         CheckConstraint("auth_generation >= 1", name="ck_users_auth_generation"),
-        CheckConstraint(
-            "registration_domain_mapping_id IS NULL OR role = 'CANDIDATE'",
-            name="ck_users_registration_mapping_candidate",
-        ),
         Index("ix_users_registration_domain_mapping", "registration_domain_mapping_id"),
     )
 
-    id: Mapped[UUID] = mapped_column(
-        PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
-    )
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
     org_id: Mapped[UUID] = mapped_column(
         PostgreSQLUUID(as_uuid=True),
         ForeignKey("organizations.id", name="fk_users_organization"),
@@ -133,6 +123,7 @@ class User(TimestampMixin, Base):
     email: Mapped[str] = mapped_column(String(320), nullable=False)
     normalized_email: Mapped[str] = mapped_column(String(320), nullable=False)
     display_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    profile_picture_url: Mapped[str | None] = mapped_column(String(2048))
     role: Mapped[str] = mapped_column(String(20), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     auth_generation: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
@@ -149,12 +140,8 @@ class User(TimestampMixin, Base):
 class ExternalLoginIdentity(Base):
     __tablename__ = "external_login_identities"
     __table_args__ = (
-        UniqueConstraint(
-            "provider", "issuer", "subject", name="uq_external_identity_subject"
-        ),
-        UniqueConstraint(
-            "user_id", "provider", name="uq_external_identity_user_provider"
-        ),
+        UniqueConstraint("provider", "issuer", "subject", name="uq_external_identity_subject"),
+        UniqueConstraint("user_id", "provider", name="uq_external_identity_user_provider"),
         ForeignKeyConstraint(
             ["user_id", "org_id"],
             ["users.id", "users.org_id"],
@@ -164,9 +151,7 @@ class ExternalLoginIdentity(Base):
         CheckConstraint("provider = 'GOOGLE'", name="ck_external_identity_provider"),
     )
 
-    id: Mapped[UUID] = mapped_column(
-        PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
-    )
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
     org_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
     user_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
     provider: Mapped[str] = mapped_column(String(20), nullable=False, default="GOOGLE")
@@ -189,9 +174,7 @@ class CandidateProfile(TimestampMixin, Base):
         ),
     )
 
-    id: Mapped[UUID] = mapped_column(
-        PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
-    )
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
     org_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
     user_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
 
@@ -218,9 +201,7 @@ class AuthenticationSession(TimestampMixin, Base):
         Index("ix_authentication_sessions_idle_expires", "idle_expires_at"),
     )
 
-    id: Mapped[UUID] = mapped_column(
-        PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
-    )
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
     org_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
     user_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
     token_digest: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False)
@@ -240,9 +221,7 @@ class OAuthTransaction(Base):
         Index("ix_oauth_transactions_expires", "expires_at"),
     )
 
-    id: Mapped[UUID] = mapped_column(
-        PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
-    )
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
     state_digest: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False)
     nonce_digest: Mapped[bytes] = mapped_column(LargeBinary(32), nullable=False)
     pkce_verifier_ciphertext: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
@@ -263,9 +242,7 @@ class AuditEvent(Base):
         Index("ix_audit_events_correlation", "correlation_id"),
     )
 
-    id: Mapped[UUID] = mapped_column(
-        PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4
-    )
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
     org_id: Mapped[UUID | None] = mapped_column(
         PostgreSQLUUID(as_uuid=True),
         ForeignKey("organizations.id", name="fk_audit_events_organization"),

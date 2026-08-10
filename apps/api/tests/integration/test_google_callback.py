@@ -28,9 +28,7 @@ async def test_oauth_transaction_is_encrypted_expiring_and_one_time(
     db_session: AsyncSession, clock: object
 ) -> None:
     key = Fernet.generate_key().decode()
-    service = OAuthTransactionService(
-        (("current", key),), allowed_return_paths=("/", "/candidate")
-    )
+    service = OAuthTransactionService((("current", key),), allowed_return_paths=("/", "/candidate"))
     created = await service.create(db_session, return_path="/candidate", now=clock.now())
     await db_session.flush()
 

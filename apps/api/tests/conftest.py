@@ -21,13 +21,17 @@ from app.auth.models import (
     Role,
     User,
 )
+from app.interviews.models import ScheduledInterview
+from app.jds.models import JobDescription
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-TEST_DATABASE_URL = os.environ.get(
-    "DATABASE_URL",
-    "postgresql+psycopg://mockinterview:local-development-only@localhost:5432/mockinterview",
-)
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
+if TEST_DATABASE_URL is None:
+    raise RuntimeError(
+        "TEST_DATABASE_URL is required; tests refuse to use DATABASE_URL because fixtures "
+        "truncate every application table"
+    )
 
 
 @dataclass
@@ -51,6 +55,7 @@ class FakeGoogleClaims:
     nonce: str = "expected-nonce"
     expires_at: datetime = datetime(2026, 8, 9, 9, 5, tzinfo=UTC)
     name: object = "Test Candidate"
+    picture: object = None
 
 
 @dataclass
@@ -84,6 +89,7 @@ class FakeGoogleOIDC:
             self.claims.subject,
             self.claims.email,
             self.claims.name if isinstance(self.claims.name, str) else None,
+            self.claims.picture if isinstance(self.claims.picture, str) else None,
         )
 
 
@@ -174,6 +180,48 @@ class Factories:
         values.update(overrides)
         return AuthenticationSession(**values)
 
+    def job_description(
+        self, *, organization: Organization, creator: User, **overrides: object
+    ) -> JobDescription:
+        values: dict[str, object] = {
+            "id": self.uuid(),
+            "org_id": organization.id,
+            "created_by_user_id": creator.id,
+            "title": "Platform Engineer",
+            "source_type": "MANUAL",
+            "content_text": "Build reliable interview systems.",
+            "source_format": None,
+            "created_at": self.clock.now(),
+            "updated_at": self.clock.now(),
+        }
+        values.update(overrides)
+        return JobDescription(**values)
+
+    def scheduled_interview(
+        self,
+        *,
+        organization: Organization,
+        candidate: User,
+        manager: User,
+        job_description: JobDescription,
+        **overrides: object,
+    ) -> ScheduledInterview:
+        values: dict[str, object] = {
+            "id": self.uuid(),
+            "org_id": organization.id,
+            "candidate_user_id": candidate.id,
+            "job_description_id": job_description.id,
+            "scheduling_manager_user_id": manager.id,
+            "scheduled_at": self.clock.now() + timedelta(days=1),
+            "status": "SCHEDULED",
+            "idempotency_key_digest": bytes([self._sequence % 256]) * 32,
+            "request_fingerprint": bytes([(self._sequence + 1) % 256]) * 32,
+            "created_at": self.clock.now(),
+            "updated_at": self.clock.now(),
+        }
+        values.update(overrides)
+        return ScheduledInterview(**values)
+
 
 @pytest.fixture
 def clock() -> FrozenClock:
@@ -205,7 +253,8 @@ async def db_session(migrated_database_url: str) -> AsyncIterator[AsyncSession]:
     async with engine.begin() as connection:
         await connection.execute(
             text(
-                "TRUNCATE audit_events, external_login_identities, candidate_profiles, "
+                "TRUNCATE audit_events, scheduled_interviews, job_descriptions, "
+                "external_login_identities, candidate_profiles, "
                 "authentication_sessions, users, organization_domain_mappings, organizations, "
                 "oauth_transactions CASCADE"
             )

@@ -21,6 +21,9 @@ _ALLOWED_METADATA_KEYS = frozenset(
         "status",
         "target_org_id",
         "transition",
+        "source_type",
+        "source_format",
+        "replayed",
     }
 )
 

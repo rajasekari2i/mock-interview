@@ -13,6 +13,19 @@ MANAGER = UUID(int=20)
 OTHER_MANAGER = UUID(int=21)
 
 
+def test_role_interview_capabilities_are_explicit() -> None:
+    assert {
+        "CANDIDATE_VIEW_OWN_INTERVIEWS",
+        "MANAGER_VIEW_OWN_JDS",
+        "MANAGER_CREATE_JD",
+        "MANAGER_VIEW_SCHEDULING_CANDIDATES",
+        "MANAGER_SCHEDULE_INTERVIEW",
+        "MANAGER_VIEW_OWN_INTERVIEWS",
+        "ADMIN_VIEW_USERS",
+        "ADMIN_VIEW_JDS",
+    } <= {capability.value for capability in Capability}
+
+
 def test_missing_authentication_context_is_denied() -> None:
     decision = authorize(
         None,
@@ -69,14 +82,17 @@ def test_candidate_ownership_and_organization_mismatch_fail_closed() -> None:
             candidate_owner_user_id=UUID(int=99),
         ),
     ).allowed
-    assert authorize(
-        context(Role.CANDIDATE),
-        ResourceScope(
-            org_id=OTHER_ORG,
-            capability=owned.capability,
-            candidate_owner_user_id=CANDIDATE,
-        ),
-    ).reason == "ORGANIZATION_MISMATCH"
+    assert (
+        authorize(
+            context(Role.CANDIDATE),
+            ResourceScope(
+                org_id=OTHER_ORG,
+                capability=owned.capability,
+                candidate_owner_user_id=CANDIDATE,
+            ),
+        ).reason
+        == "ORGANIZATION_MISMATCH"
+    )
 
 
 @pytest.mark.parametrize("role", Role)

@@ -28,6 +28,8 @@ test("global logout closes two browser contexts and re-enable requires fresh log
             id: "manager-1",
             organizationId: "org-1",
             displayName: "Manager",
+            email: "manager@example.test",
+            profilePictureUrl: null,
             role: "MANAGER"
           },
           session: { absoluteExpiresAt: "later", idleExpiresAt: "soon" }
@@ -39,9 +41,13 @@ test("global logout closes two browser contexts and re-enable requires fresh log
       return route.fulfill({ status: 204 });
     });
     await page.goto("/");
-    await expect(page.getByRole("heading", { name: "Manager workspace" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Job descriptions" })).toBeVisible();
     await page.goto("/protected");
-    await expect(page.getByRole("heading", { name: "Manager workspace" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Page unavailable" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Return to your home" })).toHaveAttribute(
+      "href",
+      "/manager/jds"
+    );
   }
 
   await firstPage.evaluate(async () => {
@@ -56,6 +62,6 @@ test("global logout closes two browser contexts and re-enable requires fresh log
 
   active = true;
   await firstPage.reload();
-  await expect(firstPage.getByRole("heading", { name: "Manager workspace" })).toBeVisible();
+  await expect(firstPage.getByRole("heading", { name: "Job descriptions" })).toBeVisible();
   await Promise.all(contexts.map(async (context) => context.close()));
 });

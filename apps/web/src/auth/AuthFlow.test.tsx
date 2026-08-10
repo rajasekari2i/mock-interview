@@ -14,6 +14,8 @@ const candidateResponse = {
     id: "10000000-0000-0000-0000-000000000001",
     organizationId: "20000000-0000-0000-0000-000000000001",
     displayName: "Candidate",
+    email: "candidate@example.test",
+    profilePictureUrl: null,
     role: "CANDIDATE",
     candidateProfileId: "30000000-0000-0000-0000-000000000001"
   },
@@ -37,6 +39,31 @@ describe("authentication runtime boundaries", () => {
         user: { ...candidateResponse.user, candidateProfileId: undefined }
       })
     ).toThrow();
+  });
+
+  it("strictly decodes required email and nullable profile picture", () => {
+    expect(decodeCurrentUserResponse(candidateResponse).user).toMatchObject({
+      email: "candidate@example.test",
+      profilePictureUrl: null
+    });
+    expect(
+      decodeCurrentUserResponse({
+        ...candidateResponse,
+        user: {
+          ...candidateResponse.user,
+          profilePictureUrl: "https://images.example.test/candidate.png"
+        }
+      }).user.profilePictureUrl
+    ).toBe("https://images.example.test/candidate.png");
+    for (const malformed of [
+      { ...candidateResponse.user, email: undefined },
+      { ...candidateResponse.user, profilePictureUrl: undefined },
+      { ...candidateResponse.user, profilePictureUrl: 42 }
+    ]) {
+      expect(() =>
+        decodeCurrentUserResponse({ ...candidateResponse, user: malformed })
+      ).toThrow();
+    }
   });
 
   it("decodes only approved recovery errors", () => {

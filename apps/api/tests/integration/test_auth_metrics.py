@@ -58,9 +58,7 @@ async def test_authentication_metrics_cover_session_denial_and_latency_signals(
         "auth_session_expired_total",
         "auth_authorization_denied_total",
     } <= names
-    assert any(
-        entry["name"] == AUTH_METRICS.latency_name for entry in snapshot["observations"]
-    )
+    assert any(entry["name"] == AUTH_METRICS.latency_name for entry in snapshot["observations"])
 
 
 def test_login_and_provider_counters_are_declared_and_secret_safe() -> None:

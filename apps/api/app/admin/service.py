@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from email_validator import EmailNotValidError, validate_email
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.audit import append_audit_event
@@ -26,6 +28,8 @@ from app.auth.models import (
 )
 from app.auth.service import acquire_domain_lock
 from app.auth.sessions import revoke_all_sessions
+from app.core.observability import metrics
+from app.jds.models import JobDescription
 from app.tenancy.coordinator import CandidateTenantMigrationCoordinator
 
 
@@ -36,6 +40,123 @@ class ProvisionUserInput:
     display_name: str
     role: Role
     active: bool
+
+
+@dataclass(frozen=True)
+class AdminJobDescriptionProjection:
+    record: JobDescription
+    creator_display_name: str
+
+
+_ORGANIZATION_SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
+
+
+async def list_organizations(session: AsyncSession) -> list[Organization]:
+    return list(
+        (
+            await session.scalars(
+                select(Organization).order_by(Organization.name, Organization.id)
+            )
+        ).all()
+    )
+
+
+async def create_organization(
+    session: AsyncSession,
+    *,
+    name: str,
+    slug: str,
+    actor_user_id: UUID | None,
+    correlation_id: str,
+    now: datetime,
+) -> Organization:
+    normalized_name = name.strip()
+    normalized_slug = slug.strip().casefold()
+    if (
+        not normalized_name
+        or len(normalized_name) > 200
+        or len(normalized_slug) > 100
+        or _ORGANIZATION_SLUG.fullmatch(normalized_slug) is None
+    ):
+        raise AuthError(ErrorCode.VALIDATION_ERROR)
+    organization_id = uuid4()
+    organization = await session.scalar(
+        postgresql_insert(Organization)
+        .values(
+            id=organization_id,
+            name=normalized_name,
+            slug=normalized_slug,
+            status=EntityStatus.ACTIVE.value,
+            created_at=now,
+            updated_at=now,
+        )
+        .on_conflict_do_nothing(index_elements=[Organization.slug])
+        .returning(Organization)
+    )
+    if organization is None:
+        raise AuthError(ErrorCode.IDENTITY_CONFLICT)
+    await append_audit_event(
+        session,
+        event_type="ORGANIZATION_CREATED",
+        outcome=AuditOutcome.SUCCESS,
+        reason_code="ADMIN_CREATED",
+        correlation_id=correlation_id,
+        occurred_at=now,
+        org_id=organization.id,
+        actor_user_id=actor_user_id,
+        resource_type="ORGANIZATION",
+        resource_id=str(organization.id),
+        metadata={"status": organization.status},
+    )
+    return organization
+
+
+async def list_admin_users(
+    session: AsyncSession, *, page: int, page_size: int
+) -> tuple[list[User], int]:
+    total = int(await session.scalar(select(func.count(User.id))) or 0)
+    users = list(
+        (
+            await session.scalars(
+                select(User)
+                .order_by(User.created_at.desc(), User.id.desc())
+                .offset((page - 1) * page_size)
+                .limit(page_size)
+            )
+        ).all()
+    )
+    metrics.increment("role_list_request_total", resource="users")
+    return users, total
+
+
+async def get_admin_user(session: AsyncSession, *, user_id: UUID) -> User:
+    user = await session.get(User, user_id)
+    if user is None:
+        raise AuthError(ErrorCode.RESOURCE_NOT_FOUND)
+    return user
+
+
+async def list_admin_job_descriptions(
+    session: AsyncSession, *, page: int, page_size: int
+) -> tuple[list[AdminJobDescriptionProjection], int]:
+    total = int(await session.scalar(select(func.count(JobDescription.id))) or 0)
+    rows = (
+        await session.execute(
+            select(JobDescription, User.display_name)
+            .join(
+                User,
+                (User.id == JobDescription.created_by_user_id)
+                & (User.org_id == JobDescription.org_id),
+            )
+            .order_by(JobDescription.created_at.desc(), JobDescription.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    ).all()
+    metrics.increment("role_list_request_total", resource="job_descriptions")
+    return [
+        AdminJobDescriptionProjection(record, display_name) for record, display_name in rows
+    ], total
 
 
 async def list_domain_mappings(
@@ -119,9 +240,7 @@ async def _lock_active_mapping(
     return mapping
 
 
-async def _mapping_users(
-    session: AsyncSession, mapping_id: UUID
-) -> list[User]:
+async def _mapping_users(session: AsyncSession, mapping_id: UUID) -> list[User]:
     return list(
         (
             await session.scalars(
@@ -389,8 +508,6 @@ async def change_user_role(
     profile = await session.scalar(
         select(CandidateProfile).where(CandidateProfile.user_id == user.id)
     )
-    if current_role is Role.CANDIDATE and role is not Role.CANDIDATE and profile is not None:
-        raise AuthError(ErrorCode.CANDIDATE_PROFILE_CONFLICT)
     if role is Role.CANDIDATE and profile is None:
         session.add(
             CandidateProfile(

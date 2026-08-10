@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-08-09T20:01:00.115Z",
+  "configuration": {
+    "samples": 100,
+    "browserContexts": 10,
+    "thresholdMilliseconds": 2000
+  },
+  "results": {
+    "successes": 100,
+    "failures": 0,
+    "withinThreshold": 100,
+    "p50Milliseconds": 376.5528440000003,
+    "p95Milliseconds": 691.12581,
+    "maxMilliseconds": 1036.771761,
+    "byRole": {
+      "CANDIDATE": 40,
+      "MANAGER": 30,
+      "ADMIN": 30
+    }
+  }
+}

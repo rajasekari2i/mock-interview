@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import os
 from logging.config import fileConfig
 
 from alembic import context
 from app.auth.models import Base
+from app.interviews import models as interview_models  # noqa: F401
+from app.jds import models as jd_models  # noqa: F401
 from sqlalchemy import engine_from_config, pool
 
 config = context.config
@@ -15,7 +18,7 @@ target_metadata = Base.metadata
 
 def run_migrations_offline() -> None:
     context.configure(
-        url=config.get_main_option("sqlalchemy.url"),
+        url=_migration_url(),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -26,8 +29,10 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
+    configuration = dict(config.get_section(config.config_ini_section, {}))
+    configuration["sqlalchemy.url"] = _migration_url()
     connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
+        configuration,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
@@ -35,6 +40,13 @@ def run_migrations_online() -> None:
         context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
         with context.begin_transaction():
             context.run_migrations()
+
+
+def _migration_url() -> str:
+    return os.environ.get(
+        "MOCKINTERVIEW_MIGRATION_DATABASE_URL",
+        config.get_main_option("sqlalchemy.url"),
+    )
 
 
 if context.is_offline_mode():

@@ -56,6 +56,7 @@ async def test_admin_async_response_and_mapping_route_returns_are_covered(
         org_id=organization_id,
         email="admin@example.test",
         display_name="Admin",
+        profile_picture_url=None,
         role=Role.ADMIN.value,
         status=EntityStatus.ACTIVE.value,
     )
@@ -88,6 +89,20 @@ async def test_admin_async_response_and_mapping_route_returns_are_covered(
     monkeypatch.setattr(admin_router, "reassign_domain_mapping", AsyncMock(return_value=mapping))
     monkeypatch.setattr(admin_router, "remove_domain_mapping", AsyncMock(return_value=mapping))
 
+    organization = SimpleNamespace(
+        id=organization_id,
+        name="Example Organization",
+        slug="example",
+        status=EntityStatus.ACTIVE.value,
+        created_at=now,
+        updated_at=now,
+    )
+    monkeypatch.setattr(admin_router, "list_organizations", AsyncMock(return_value=[organization]))
+    monkeypatch.setattr(admin_router, "create_organization", AsyncMock(return_value=organization))
+    monkeypatch.setattr(admin_router, "provision_user", AsyncMock(return_value=user))
+    monkeypatch.setattr(admin_router, "change_user_role", AsyncMock(return_value=user))
+    monkeypatch.setattr(admin_router, "change_user_status", AsyncMock(return_value=user))
+
     listed = await admin_router.get_domain_mappings(context, include_removed=False)
     created = await admin_router.post_domain_mapping(
         admin_router.CreateDomainMappingRequest(
@@ -103,8 +118,39 @@ async def test_admin_async_response_and_mapping_route_returns_are_covered(
         context,
     )
     removed = await admin_router.delete_domain_mapping(mapping_id, request, context)
+    organizations = await admin_router.get_organizations(context)
+    created_organization = await admin_router.post_organization(
+        admin_router.CreateOrganizationRequest(name="Example Organization", slug="example"),
+        request,
+        context,
+    )
+    created_user = await admin_router.create_user(
+        admin_router.ProvisionUserRequest(
+            organizationId=organization_id,
+            email="person@example.com",
+            displayName="Person",
+            role=Role.MANAGER,
+            status=EntityStatus.ACTIVE,
+        ),
+        request,
+        context,
+    )
+    changed_role = await admin_router.update_role(
+        user_id,
+        admin_router.ChangeRoleRequest(role=Role.ADMIN),
+        request,
+        context,
+    )
+    changed_status = await admin_router.update_status(
+        user_id,
+        admin_router.ChangeStatusRequest(status=EntityStatus.DISABLED),
+        request,
+        context,
+    )
     assert listed.items[0].id == created.id == reassigned.id == mapping_id
     assert removed.status_code == 204
+    assert organizations.items[0].id == created_organization.id == organization_id
+    assert created_user.id == changed_role.id == changed_status.id == user_id
 
 
 @pytest.mark.asyncio
@@ -133,9 +179,7 @@ async def test_candidate_dependency_resolves_profile_and_fails_when_missing(
     assert profile_error.value.code is ErrorCode.CANDIDATE_PROFILE_CONFLICT
 
     user.role = Role.MANAGER.value
-    manager = dependencies.authenticated_request(
-        _request(app, cookie="mi_session_test=token")
-    )
+    manager = dependencies.authenticated_request(_request(app, cookie="mi_session_test=token"))
     manager_context = await anext(manager)
     assert manager_context.candidate_profile_id is None
     await manager.aclose()
@@ -175,9 +219,7 @@ async def test_logout_and_callback_complete_after_async_boundaries(
     assert logout.status_code == 204
     csrf_validate.assert_called_once()
 
-    record = SimpleNamespace(
-        csrf_token_digest=b"digest", user_id=UUID(int=11), org_id=UUID(int=12)
-    )
+    record = SimpleNamespace(csrf_token_digest=b"digest", user_id=UUID(int=11), org_id=UUID(int=12))
     monkeypatch.setattr(auth_router, "find_session", AsyncMock(return_value=record))
     revoke = AsyncMock(return_value=2)
     audit = AsyncMock()

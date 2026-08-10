@@ -31,6 +31,9 @@ class AuthMetricNames:
         "auth_session_expired_total",
         "auth_session_revoked_total",
         "auth_authorization_denied_total",
+        "jd_creation_total",
+        "interview_scheduling_total",
+        "role_list_request_total",
     )
     latency_name: str = "auth_request_latency_seconds"
 
@@ -182,7 +185,9 @@ class AuthMetricsMiddleware:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         path = str(scope.get("path", ""))
-        if scope["type"] != "http" or not path.startswith(("/api/v1/auth", "/api/v1/admin")):
+        if scope["type"] != "http" or not path.startswith(
+            ("/api/v1/auth", "/api/v1/admin", "/api/v1/candidate", "/api/v1/manager")
+        ):
             await self.app(scope, receive, send)
             return
         started = perf_counter()

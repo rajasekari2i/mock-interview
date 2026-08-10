@@ -31,11 +31,14 @@ async def test_admin_preprovisions_candidate_and_profile_atomically(
 
     assert result.normalized_email == "candidate@example.com"
     assert result.role == Role.CANDIDATE.value
-    assert await db_session.scalar(
-        select(func.count())
-        .select_from(CandidateProfile)
-        .where(CandidateProfile.user_id == result.id)
-    ) == 1
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(CandidateProfile)
+            .where(CandidateProfile.user_id == result.id)
+        )
+        == 1
+    )
 
 
 def test_email_normalization_rejects_invalid_addresses() -> None:

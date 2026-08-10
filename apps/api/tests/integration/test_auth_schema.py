@@ -29,6 +29,8 @@ EXPECTED_TABLES = {
     "oauth_transactions",
     "audit_events",
     "organization_domain_mappings",
+    "job_descriptions",
+    "scheduled_interviews",
 }
 
 EXPECTED_CONSTRAINTS = {
@@ -46,10 +48,25 @@ EXPECTED_CONSTRAINTS = {
     "uq_authentication_sessions_token_digest",
     "fk_authentication_sessions_user_org",
     "ck_authentication_sessions_revocation_reason",
-    "ck_users_registration_mapping_candidate",
     "fk_users_registration_domain_mapping",
     "uq_oauth_transactions_state_digest",
     "ck_audit_events_outcome",
+    "fk_job_descriptions_organization",
+    "fk_job_descriptions_creator_org",
+    "uq_job_descriptions_id_org",
+    "uq_job_descriptions_id_creator_org",
+    "ck_job_descriptions_source_type",
+    "ck_job_descriptions_source_shape",
+    "ck_job_descriptions_title_nonblank",
+    "ck_job_descriptions_content_nonblank",
+    "fk_scheduled_interviews_organization",
+    "fk_scheduled_interviews_candidate_org",
+    "fk_scheduled_interviews_manager_org",
+    "fk_scheduled_interviews_owned_jd",
+    "uq_scheduled_interviews_manager_idempotency",
+    "ck_scheduled_interviews_status",
+    "ck_scheduled_interviews_idempotency_digest_length",
+    "ck_scheduled_interviews_fingerprint_length",
 }
 
 EXPECTED_INDEXES = {
@@ -61,6 +78,12 @@ EXPECTED_INDEXES = {
     "ix_audit_events_correlation",
     "uq_organization_domain_mappings_active_domain",
     "ix_users_registration_domain_mapping",
+    "ix_job_descriptions_creator_created_id",
+    "ix_job_descriptions_org_created_id",
+    "ix_job_descriptions_created_id",
+    "ix_scheduled_interviews_candidate_scheduled_id",
+    "ix_scheduled_interviews_manager_scheduled_id",
+    "ix_scheduled_interviews_org_scheduled_id",
 }
 
 
@@ -121,6 +144,14 @@ def test_registration_provenance_is_nullable_and_tenant_children_cascade() -> No
         assert constraint.onupdate == "CASCADE"
 
 
+def test_feature_columns_are_present_and_old_role_check_is_removed() -> None:
+    users = Base.metadata.tables["users"]
+    assert users.columns["profile_picture_url"].nullable is True
+    assert "ck_users_registration_mapping_candidate" not in {
+        constraint.name for constraint in users.constraints
+    }
+
+
 @pytest.fixture
 def migrated_engine() -> Iterator[Engine]:
     database_url = os.environ.get(
@@ -166,10 +197,7 @@ def test_migration_round_trips_and_recovers_forward(migrated_engine: Engine) -> 
     }
     with migrated_engine.connect() as connection:
         default_organization = connection.execute(
-            text(
-                "SELECT name, slug, status FROM organizations "
-                "WHERE slug = 'ideas2it'"
-            )
+            text("SELECT name, slug, status FROM organizations WHERE slug = 'ideas2it'")
         ).one()
         default_mapping = connection.execute(
             text(

@@ -67,6 +67,7 @@ async def test_mapped_unknown_user_is_created_as_candidate_with_provenance(
             "new-subject",
             "new@example.test",
             "  New   Candidate ",
+            "https://images.example.test/new.png",
         ),
         now=clock.now(),
     )
@@ -79,9 +80,82 @@ async def test_mapped_unknown_user_is_created_as_candidate_with_provenance(
     )
     assert user.role == Role.CANDIDATE.value
     assert user.display_name == "New Candidate"
+    assert user.profile_picture_url == "https://images.example.test/new.png"
     assert user.registration_domain_mapping_id == mapping.id
     assert profile is not None and profile.org_id == organization.id
     assert identity is not None and identity.org_id == organization.id
+
+
+@pytest.mark.asyncio
+async def test_successful_login_refreshes_verified_identity_fields(
+    db_session: AsyncSession, factories: object, clock: object
+) -> None:
+    organization = factories.organization()
+    user = factories.user(
+        organization=organization,
+        email="person@example.test",
+        normalized_email="person@example.test",
+        display_name="Old Name",
+        profile_picture_url="https://images.example.test/old.png",
+    )
+    identity = ExternalLoginIdentity(
+        org_id=organization.id,
+        user_id=user.id,
+        provider="GOOGLE",
+        issuer="https://accounts.google.com",
+        subject="refresh-subject",
+        email_snapshot=user.email,
+        bound_at=clock.now(),
+        last_authenticated_at=clock.now(),
+    )
+    db_session.add_all([organization, user])
+    await db_session.flush()
+    db_session.add(identity)
+    await db_session.flush()
+
+    resolved = await resolve_or_bind_identity(
+        db_session,
+        GoogleClaims(
+            "https://accounts.google.com",
+            "refresh-subject",
+            "person@example.test",
+            "  Refreshed   Person ",
+            "https://images.example.test/refreshed.png",
+        ),
+        now=clock.now(),
+    )
+
+    assert resolved.display_name == "Refreshed Person"
+    assert resolved.profile_picture_url == "https://images.example.test/refreshed.png"
+
+
+@pytest.mark.asyncio
+async def test_absent_identity_claims_use_safe_name_and_picture_fallback(
+    db_session: AsyncSession, factories: object, clock: object
+) -> None:
+    organization = factories.organization()
+    user = factories.user(
+        organization=organization,
+        email="fallback@example.test",
+        normalized_email="fallback@example.test",
+        display_name="Old Name",
+        profile_picture_url="https://images.example.test/old.png",
+    )
+    db_session.add_all([organization, user])
+    await db_session.flush()
+
+    resolved = await resolve_or_bind_identity(
+        db_session,
+        GoogleClaims(
+            "https://accounts.google.com",
+            "fallback-subject",
+            "fallback@example.test",
+        ),
+        now=clock.now(),
+    )
+
+    assert resolved.display_name == "fallback"
+    assert resolved.profile_picture_url is None
 
 
 @pytest.mark.asyncio
@@ -114,9 +188,7 @@ async def test_removed_mapping_does_not_authorize_registration(
     db_session: AsyncSession, factories: object, clock: object
 ) -> None:
     organization = factories.organization()
-    mapping = factories.domain_mapping(
-        organization=organization, removed_at=clock.now()
-    )
+    mapping = factories.domain_mapping(organization=organization, removed_at=clock.now())
     db_session.add_all([organization, mapping])
     await db_session.flush()
     with pytest.raises(AuthError) as denied:
@@ -225,9 +297,7 @@ async def test_ambiguous_email_existing_binding_and_candidate_profile_conflict_a
     with pytest.raises(AuthError) as org_disabled:
         await resolve_or_bind_identity(
             db_session,
-            GoogleClaims(
-                "https://accounts.google.com", "existing-subject", "changed@example.test"
-            ),
+            GoogleClaims("https://accounts.google.com", "existing-subject", "changed@example.test"),
             now=clock.now(),
         )
     assert org_disabled.value.code is ErrorCode.ACCOUNT_DISABLED
@@ -383,12 +453,8 @@ async def test_concurrent_identity_recheck_handles_success_and_orphan(
     db_session.add_all([organization, user])
     await db_session.flush()
     identity = SimpleNamespace(user_id=user.id)
-    monkeypatch.setattr(
-        identity_service, "_find_identity", AsyncMock(side_effect=[None, identity])
-    )
-    monkeypatch.setattr(
-        identity_service, "_find_preprovisioned_users", AsyncMock(return_value=[])
-    )
+    monkeypatch.setattr(identity_service, "_find_identity", AsyncMock(side_effect=[None, identity]))
+    monkeypatch.setattr(identity_service, "_find_preprovisioned_users", AsyncMock(return_value=[]))
     resolved = await resolve_or_bind_identity(
         db_session,
         GoogleClaims("https://accounts.google.com", "subject", "new@example.test"),
@@ -396,9 +462,7 @@ async def test_concurrent_identity_recheck_handles_success_and_orphan(
     )
     assert resolved.id == user.id
 
-    monkeypatch.setattr(
-        identity_service, "_find_identity", AsyncMock(side_effect=[None, identity])
-    )
+    monkeypatch.setattr(identity_service, "_find_identity", AsyncMock(side_effect=[None, identity]))
     await db_session.delete(user)
     await db_session.flush()
     with pytest.raises(AuthError) as orphan:

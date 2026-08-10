@@ -66,9 +66,7 @@ def test_current_and_previous_pkce_keys_are_parsed_in_rotation_order() -> None:
     previous = Fernet.generate_key().decode()
 
     settings = Settings(
-        **valid_settings(
-            oauth_transaction_encryption_keys=f"current={current},previous={previous}"
-        )
+        **valid_settings(oauth_transaction_encryption_keys=f"current={current},previous={previous}")
     )
 
     assert [item.key_id for item in settings.oauth_encryption_keys] == ["current", "previous"]

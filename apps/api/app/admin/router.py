@@ -7,7 +7,7 @@ from enum import StrEnum
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from sqlalchemy import select
 
@@ -16,7 +16,12 @@ from app.admin.service import (
     change_user_role,
     change_user_status,
     create_domain_mapping,
+    create_organization,
+    get_admin_user,
+    list_admin_job_descriptions,
+    list_admin_users,
     list_domain_mappings,
+    list_organizations,
     provision_user,
     reassign_domain_mapping,
     remove_domain_mapping,
@@ -29,6 +34,7 @@ from app.auth.dependencies import (
 from app.auth.models import (
     CandidateProfile,
     EntityStatus,
+    Organization,
     OrganizationDomainMapping,
     Role,
     User,
@@ -60,6 +66,79 @@ class AdminUserResponse(BaseModel):
     role: str
     status: str
     candidate_profile_id: UUID | None = Field(default=None, alias="candidateProfileId")
+    profile_picture_url: str | None = Field(default=None, alias="profilePictureUrl")
+
+
+class AdminUserListResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: UUID
+    organization_id: UUID = Field(alias="organizationId")
+    email: str
+    display_name: str = Field(alias="displayName")
+    role: str
+    status: str
+
+
+class AdminUserPage(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    items: list[AdminUserListResponse]
+    page: int
+    page_size: int = Field(alias="pageSize")
+    total_items: int = Field(alias="totalItems")
+    total_pages: int = Field(alias="totalPages")
+
+
+class AdminCreatorResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: UUID
+    display_name: str = Field(alias="displayName")
+
+
+class AdminJobDescriptionResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: UUID
+    organization_id: UUID = Field(alias="organizationId")
+    title: str
+    source_type: str = Field(alias="sourceType")
+    source_format: str | None = Field(alias="sourceFormat")
+    created_at: datetime = Field(alias="createdAt")
+    created_by: AdminCreatorResponse = Field(alias="createdBy")
+
+
+class AdminJobDescriptionPage(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    items: list[AdminJobDescriptionResponse]
+    page: int
+    page_size: int = Field(alias="pageSize")
+    total_items: int = Field(alias="totalItems")
+    total_pages: int = Field(alias="totalPages")
+
+
+class CreateOrganizationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=200)
+    slug: str = Field(min_length=1, max_length=100)
+
+
+class OrganizationResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: UUID
+    name: str
+    slug: str
+    status: EntityStatus
+    created_at: datetime = Field(alias="createdAt")
+    updated_at: datetime = Field(alias="updatedAt")
+
+
+class OrganizationListResponse(BaseModel):
+    items: list[OrganizationResponse]
 
 
 class ChangeRoleRequest(BaseModel):
@@ -147,6 +226,135 @@ async def _response(context: AuthenticatedRequest, user_id: UUID) -> AdminUserRe
         role=user.role,
         status=user.status,
         candidateProfileId=candidate_profile_id,
+        profilePictureUrl=user.profile_picture_url,
+    )
+
+
+def _user_list_response(user: User) -> AdminUserListResponse:
+    return AdminUserListResponse(
+        id=user.id,
+        organizationId=user.org_id,
+        email=user.email,
+        displayName=user.display_name,
+        role=user.role,
+        status=user.status,
+    )
+
+
+def _organization_response(organization: Organization) -> OrganizationResponse:
+    return OrganizationResponse(
+        id=organization.id,
+        name=organization.name,
+        slug=organization.slug,
+        status=EntityStatus(organization.status),
+        createdAt=organization.created_at,
+        updatedAt=organization.updated_at,
+    )
+
+
+async def _user_response(context: AuthenticatedRequest, user: User) -> AdminUserResponse:
+    candidate_profile_id = await context.session.scalar(
+        select(CandidateProfile.id).where(CandidateProfile.user_id == user.id)
+    )
+    return AdminUserResponse(
+        id=user.id,
+        organizationId=user.org_id,
+        email=user.email,
+        displayName=user.display_name,
+        role=user.role,
+        status=user.status,
+        candidateProfileId=candidate_profile_id,
+        profilePictureUrl=user.profile_picture_url,
+    )
+
+
+@router.get("/users", response_model=AdminUserPage)
+async def get_users(
+    context: Annotated[AuthenticatedRequest, Depends(require_admin)],
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(alias="pageSize", ge=1, le=100)] = 25,
+) -> AdminUserPage:
+    users, total = await list_admin_users(context.session, page=page, page_size=page_size)
+    return AdminUserPage(
+        items=[_user_list_response(user) for user in users],
+        page=page,
+        pageSize=page_size,
+        totalItems=total,
+        totalPages=(total + page_size - 1) // page_size,
+    )
+
+
+@router.get("/organizations", response_model=OrganizationListResponse)
+async def get_organizations(
+    context: Annotated[AuthenticatedRequest, Depends(require_admin)],
+) -> OrganizationListResponse:
+    organizations = await list_organizations(context.session)
+    return OrganizationListResponse(
+        items=[_organization_response(organization) for organization in organizations]
+    )
+
+
+@router.post(
+    "/organizations",
+    response_model=OrganizationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def post_organization(
+    payload: CreateOrganizationRequest,
+    request: Request,
+    context: Annotated[AuthenticatedRequest, Depends(require_admin)],
+) -> OrganizationResponse:
+    _validate_csrf(request, context)
+    now = getattr(request.app.state, "clock", lambda: datetime.now(UTC))()
+    organization = await create_organization(
+        context.session,
+        name=payload.name,
+        slug=payload.slug,
+        actor_user_id=context.user.id,
+        correlation_id=getattr(request.state, "correlation_id", get_correlation_id()),
+        now=now,
+    )
+    return _organization_response(organization)
+
+
+@router.get("/users/{user_id}", response_model=AdminUserResponse)
+async def get_user_details(
+    user_id: UUID,
+    context: Annotated[AuthenticatedRequest, Depends(require_admin)],
+) -> AdminUserResponse:
+    user = await get_admin_user(context.session, user_id=user_id)
+    return await _user_response(context, user)
+
+
+@router.get("/job-descriptions", response_model=AdminJobDescriptionPage)
+async def get_job_descriptions(
+    context: Annotated[AuthenticatedRequest, Depends(require_admin)],
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(alias="pageSize", ge=1, le=100)] = 25,
+) -> AdminJobDescriptionPage:
+    items, total = await list_admin_job_descriptions(
+        context.session, page=page, page_size=page_size
+    )
+    return AdminJobDescriptionPage(
+        items=[
+            AdminJobDescriptionResponse(
+                id=item.record.id,
+                organizationId=item.record.org_id,
+                title=item.record.title,
+                sourceType=item.record.source_type,
+                sourceFormat=item.record.source_format,
+                createdAt=item.record.created_at,
+                createdBy=AdminCreatorResponse(
+                    id=item.record.created_by_user_id,
+                    displayName=item.creator_display_name,
+                ),
+            )
+            for item in items
+        ],
+        page=page,
+        pageSize=page_size,
+        totalItems=total,
+        totalPages=(total + page_size - 1) // page_size,
     )
 
 
@@ -222,9 +430,7 @@ async def get_domain_mappings(
     context: Annotated[AuthenticatedRequest, Depends(require_domain_mapping_admin)],
     include_removed: bool = False,
 ) -> DomainMappingListResponse:
-    mappings = await list_domain_mappings(
-        context.session, include_removed=include_removed
-    )
+    mappings = await list_domain_mappings(context.session, include_removed=include_removed)
     return DomainMappingListResponse(items=[_mapping_response(item) for item in mappings])
 
 

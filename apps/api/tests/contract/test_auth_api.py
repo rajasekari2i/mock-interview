@@ -17,9 +17,7 @@ async def test_login_redirect_and_unauthenticated_me_contract() -> None:
         cancelled = await client.get(
             "/api/v1/auth/google/callback", params={"state": "state", "error": "cancelled"}
         )
-        incomplete = await client.get(
-            "/api/v1/auth/google/callback", params={"state": "state"}
-        )
+        incomplete = await client.get("/api/v1/auth/google/callback", params={"state": "state"})
 
     assert login.status_code == 302
     assert login.headers["cache-control"] == "no-store"

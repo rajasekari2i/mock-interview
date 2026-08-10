@@ -25,6 +25,7 @@ def valid_claims(**overrides: object) -> dict[str, object]:
         "email": "person@example.test",
         "email_verified": True,
         "name": "  Ada   Lovelace  ",
+        "picture": "https://images.example.test/ada.png",
     }
     values.update(overrides)
     return values
@@ -45,7 +46,34 @@ def test_verified_claims_are_strictly_decoded() -> None:
         subject="stable-subject",
         email="person@example.test",
         name="Ada Lovelace",
+        picture="https://images.example.test/ada.png",
     )
+
+
+@pytest.mark.parametrize(
+    "picture",
+    [
+        None,
+        "",
+        "http://images.example.test/person.png",
+        "//images.example.test/person.png",
+        "https://user:secret@images.example.test/person.png",
+        "https://images.example.test/person.png\x00",
+        "https://[malformed/person.png",
+        "https://images.example.test/" + "x" * 2049,
+        42,
+    ],
+)
+def test_unusable_optional_picture_is_ignored(picture: object) -> None:
+    claims = validate_google_claims(
+        valid_claims(picture=picture),
+        signature_verified=True,
+        expected_issuer="https://accounts.google.com",
+        expected_audience="client-id",
+        expected_nonce="expected-nonce",
+        now=NOW,
+    )
+    assert claims.picture is None
 
 
 def test_legacy_google_issuer_is_accepted_for_the_configured_google_issuer() -> None:
@@ -232,8 +260,9 @@ async def test_authlib_adapter_records_safe_invalid_response_stage(
     caplog.set_level("WARNING", logger=google_oidc.logger.name)
 
     class Claims(dict[str, object]):
-        def validate(self, *, now: float) -> None:
+        def validate(self, *, now: float, leeway: int) -> None:
             assert now == NOW.timestamp()
+            assert leeway == 120
             if mode == "standard":
                 raise JoseError("invalid standard claim")
 

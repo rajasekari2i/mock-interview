@@ -14,9 +14,7 @@ from app.tenancy.contracts import CandidateTenantMigrationParticipant
 class CandidateTenantMigrationCoordinator:
     """Run registered participants in a deterministic, fail-closed order."""
 
-    def __init__(
-        self, participants: Iterable[CandidateTenantMigrationParticipant] = ()
-    ) -> None:
+    def __init__(self, participants: Iterable[CandidateTenantMigrationParticipant] = ()) -> None:
         ordered = tuple(sorted(participants, key=lambda participant: participant.name))
         names = tuple(participant.name for participant in ordered)
         if any(not name for name in names) or len(names) != len(set(names)):
@@ -34,9 +32,7 @@ class CandidateTenantMigrationCoordinator:
     ) -> dict[str, int]:
         ordered_ids = tuple(sorted(candidate_user_ids))
         for participant in self.participants:
-            await participant.validate_and_lock(
-                session, ordered_ids, source_org_id, target_org_id
-            )
+            await participant.validate_and_lock(session, ordered_ids, source_org_id, target_org_id)
         counts: dict[str, int] = {}
         for participant in self.participants:
             counts[participant.name] = await participant.migrate(

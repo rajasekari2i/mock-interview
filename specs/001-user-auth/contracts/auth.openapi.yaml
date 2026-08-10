@@ -156,8 +156,9 @@ paths:
       summary: Change one User role and invalidate all their sessions
       description: >-
         Admin only. A transition to Candidate creates or validates the one-to-one CandidateProfile
-        before commit. V1 rejects transitions away from Candidate while a CandidateProfile exists.
-        A successful role change, auth-generation increment, revocation, and audit event are atomic.
+        before commit. CandidateProfile and registration provenance remain as history when leaving
+        Candidate. A successful role change, auth-generation increment, revocation, and audit event
+        are atomic.
       security:
         - sessionCookie: []
       parameters:
@@ -353,6 +354,7 @@ components:
       type: apiKey
       in: cookie
       name: __Host-mi_session
+      description: Opaque HttpOnly Secure host-only application session cookie.
 
   parameters:
     UserId:
@@ -425,34 +427,59 @@ components:
             correlationId:
               type: string
               minLength: 1
+    UserBase:
+      type: object
+      required: [id, organizationId, displayName, email, profilePictureUrl, role]
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 200
+        email:
+          type: string
+          format: email
+          maxLength: 320
+        profilePictureUrl:
+          type: [string, "null"]
+          format: uri
+        role:
+          $ref: "#/components/schemas/Role"
     CandidateCurrentUser:
-      type: object
-      additionalProperties: false
-      required: [id, organizationId, displayName, role, candidateProfileId]
-      properties:
-        id: { type: string, format: uuid }
-        organizationId: { type: string, format: uuid }
-        displayName: { type: string, minLength: 1 }
-        role: { type: string, const: CANDIDATE }
-        candidateProfileId: { type: string, format: uuid }
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/UserBase"
+        - type: object
+          required: [role, candidateProfileId]
+          properties:
+            role:
+              const: CANDIDATE
+            candidateProfileId:
+              type: string
+              format: uuid
     ManagerCurrentUser:
-      type: object
-      additionalProperties: false
-      required: [id, organizationId, displayName, role]
-      properties:
-        id: { type: string, format: uuid }
-        organizationId: { type: string, format: uuid }
-        displayName: { type: string, minLength: 1 }
-        role: { type: string, const: MANAGER }
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/UserBase"
+        - type: object
+          required: [role]
+          properties:
+            role:
+              const: MANAGER
     AdminCurrentUser:
-      type: object
-      additionalProperties: false
-      required: [id, organizationId, displayName, role]
-      properties:
-        id: { type: string, format: uuid }
-        organizationId: { type: string, format: uuid }
-        displayName: { type: string, minLength: 1 }
-        role: { type: string, const: ADMIN }
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/UserBase"
+        - type: object
+          required: [role]
+          properties:
+            role:
+              const: ADMIN
     CurrentUser:
       oneOf:
         - $ref: "#/components/schemas/CandidateCurrentUser"
@@ -464,6 +491,17 @@ components:
           CANDIDATE: "#/components/schemas/CandidateCurrentUser"
           MANAGER: "#/components/schemas/ManagerCurrentUser"
           ADMIN: "#/components/schemas/AdminCurrentUser"
+    SessionSummary:
+      type: object
+      additionalProperties: false
+      required: [absoluteExpiresAt, idleExpiresAt]
+      properties:
+        absoluteExpiresAt:
+          type: string
+          format: date-time
+        idleExpiresAt:
+          type: string
+          format: date-time
     CurrentUserResponse:
       type: object
       additionalProperties: false
@@ -472,12 +510,7 @@ components:
         user:
           $ref: "#/components/schemas/CurrentUser"
         session:
-          type: object
-          additionalProperties: false
-          required: [absoluteExpiresAt, idleExpiresAt]
-          properties:
-            absoluteExpiresAt: { type: string, format: date-time }
-            idleExpiresAt: { type: string, format: date-time }
+          $ref: "#/components/schemas/SessionSummary"
     ProvisionUserRequest:
       type: object
       additionalProperties: false

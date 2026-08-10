@@ -46,6 +46,9 @@ async def test_admin_security_mutation_revokes_two_sessions(
         with pytest.raises(AuthError) as denied:
             await resolve_session(db_session, created.token, now=clock.now())
         assert denied.value.code is ErrorCode.SESSION_REVOKED
+        assert created.record.revocation_reason == (
+            "ROLE_CHANGED" if mutation == "role" else "ACCOUNT_DISABLED"
+        )
 
 
 @pytest.mark.asyncio
@@ -105,7 +108,5 @@ async def test_mapping_removal_revokes_every_old_cookie_but_not_independent_user
         with pytest.raises(AuthError) as denied:
             await resolve_session(db_session, created.token, now=clock.now())
         assert denied.value.code is ErrorCode.SESSION_REVOKED
-    unaffected_user = (
-        await resolve_session(db_session, unaffected.token, now=clock.now())
-    )[1]
+    unaffected_user = (await resolve_session(db_session, unaffected.token, now=clock.now()))[1]
     assert unaffected_user.id == independent.id

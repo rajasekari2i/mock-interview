@@ -10,6 +10,8 @@ const manager = {
     id: "manager-1",
     organizationId: "org-1",
     displayName: "Manager",
+    email: "manager@example.test",
+    profilePictureUrl: null,
     role: "MANAGER"
   },
   session: { absoluteExpiresAt: "later", idleExpiresAt: "soon" }

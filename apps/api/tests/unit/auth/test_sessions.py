@@ -92,18 +92,24 @@ async def test_revoke_all_is_global_idempotent_and_reenable_does_not_restore_ses
     first = await create_session(db_session, user, now=clock.now())
     second = await create_session(db_session, user, now=clock.now())
 
-    assert await revoke_all_sessions(
-        db_session,
-        user_id=user.id,
-        reason=RevocationReason.LOGOUT_ALL,
-        now=clock.now(),
-    ) == 2
-    assert await revoke_all_sessions(
-        db_session,
-        user_id=user.id,
-        reason=RevocationReason.LOGOUT_ALL,
-        now=clock.now(),
-    ) == 0
+    assert (
+        await revoke_all_sessions(
+            db_session,
+            user_id=user.id,
+            reason=RevocationReason.LOGOUT_ALL,
+            now=clock.now(),
+        )
+        == 2
+    )
+    assert (
+        await revoke_all_sessions(
+            db_session,
+            user_id=user.id,
+            reason=RevocationReason.LOGOUT_ALL,
+            now=clock.now(),
+        )
+        == 0
+    )
     user.status = EntityStatus.DISABLED.value
     user.status = EntityStatus.ACTIVE.value
 
@@ -146,12 +152,12 @@ async def test_mapping_lifecycle_reasons_revoke_all_and_remain_terminal(
         await create_session(db_session, user, now=clock.now()),
         await create_session(db_session, user, now=clock.now()),
     ]
-    assert await revoke_all_sessions(
-        db_session, user_id=user.id, reason=reason, now=clock.now()
-    ) == 2
-    assert await revoke_all_sessions(
-        db_session, user_id=user.id, reason=reason, now=clock.now()
-    ) == 0
+    assert (
+        await revoke_all_sessions(db_session, user_id=user.id, reason=reason, now=clock.now()) == 2
+    )
+    assert (
+        await revoke_all_sessions(db_session, user_id=user.id, reason=reason, now=clock.now()) == 0
+    )
     assert {item.record.revocation_reason for item in created} == {reason.value}
     for item in created:
         with pytest.raises(AuthError) as denied:

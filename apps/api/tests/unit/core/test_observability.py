@@ -45,9 +45,7 @@ async def test_correlation_id_is_generated_propagated_and_returned() -> None:
 async def test_valid_incoming_correlation_is_retained_and_invalid_input_is_replaced() -> None:
     transport = httpx.ASGITransport(app=make_app())
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        retained = await client.get(
-            "/correlation", headers={"X-Correlation-ID": "request-123_ABC"}
-        )
+        retained = await client.get("/correlation", headers={"X-Correlation-ID": "request-123_ABC"})
         replaced = await client.get(
             "/correlation", headers={"X-Correlation-ID": "unsafe value\nlog"}
         )
@@ -82,6 +80,11 @@ def test_structured_event_has_required_fields_and_recursively_redacts_secrets() 
 
 
 def test_metrics_registry_exposes_required_counters_and_latency_observations() -> None:
+    assert {
+        "jd_creation_total",
+        "interview_scheduling_total",
+        "role_list_request_total",
+    } <= set(AUTH_METRICS.counter_names)
     registry = MetricsRegistry()
     for metric_name in AUTH_METRICS.counter_names:
         registry.increment(metric_name, reason="test")
