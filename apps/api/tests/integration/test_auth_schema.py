@@ -154,10 +154,7 @@ def test_feature_columns_are_present_and_old_role_check_is_removed() -> None:
 
 @pytest.fixture
 def migrated_engine() -> Iterator[Engine]:
-    database_url = os.environ.get(
-        "DATABASE_URL",
-        "postgresql+psycopg://mockinterview:local-development-only@localhost:5432/mockinterview",
-    )
+    database_url = os.environ["TEST_DATABASE_URL"]
     config = Config("apps/api/alembic.ini")
     config.set_main_option("sqlalchemy.url", database_url)
     command.downgrade(config, "base")
@@ -214,10 +211,7 @@ def test_migration_round_trips_and_recovers_forward(migrated_engine: Engine) -> 
 
 @pytest.mark.integration
 def test_populated_001_upgrade_preserves_users_and_cascades_tenant_children() -> None:
-    database_url = os.environ.get(
-        "DATABASE_URL",
-        "postgresql+psycopg://mockinterview:local-development-only@localhost:5432/mockinterview",
-    )
+    database_url = os.environ["TEST_DATABASE_URL"]
     config = Config("apps/api/alembic.ini")
     config.set_main_option("sqlalchemy.url", database_url)
     command.downgrade(config, "base")
