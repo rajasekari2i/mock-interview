@@ -6,17 +6,19 @@
 
 ## Summary
 
-Build the v1 authentication and authorization foundation as modules in a Python 3.12 FastAPI API
-and strict React TypeScript web application. Google OpenID Connect authenticates only Admin-
-pre-provisioned users. The backend binds a verified Google subject to one application user,
-creates an opaque PostgreSQL-backed session, enforces organization/role/resource policies, and
-records secret-safe audit events. The frontend consumes only minimal current-user context through
-an HTTP-only cookie session and provides accessible role-specific routing and recovery guidance.
+Extend the implemented v1 authentication and authorization foundation with controlled first-login
+Candidate registration. Existing independently pre-provisioned users retain first-email binding
+without requiring a mapping. Only when no User matches must the verified Google email domain match
+one active PostgreSQL-backed organization mapping exactly; the callback then atomically creates the
+Candidate User, profile, Google identity, session, provenance link, and audit events. Admin-only
+APIs create, list, remove, and reassign mappings with CSRF, authorization, validation, and audit.
 
-The design includes global session invalidation on logout, role change, or account disablement;
-one-to-one Candidate User/Profile association; scoped Manager readiness-report authorization; a
-Google-only surface; deterministic test adapters; 100% configured coverage gates; and a
-non-blocking performance baseline with no fixed v1 throughput or latency target.
+Mapping removal disables exactly its self-registered Candidates and revokes their sessions.
+Mapping reassignment transactionally migrates those Candidates and every registered tenant-
+migration participant to the new organization, revokes sessions, and rolls back on any failure.
+Exact domain matching, provider-signed display-name handling, row locking, cascading tenancy
+constraints, migration provenance, and deterministic concurrency/rollback tests preserve the
+existing Google-only, deny-by-default, auditable security model.
 
 ## Technical Context
 
@@ -25,27 +27,30 @@ non-blocking performance baseline with no fixed v1 throughput or latency target.
 **Primary Dependencies**: FastAPI, SQLAlchemy 2, Alembic, PostgreSQL async driver, Authlib,
 Cryptography, Pydantic Settings; React, React Router, Vitest, React Testing Library, Playwright
 
-**Storage**: PostgreSQL for organizations, users, external identities, Candidate-profile links,
-application sessions, OAuth transactions, and audit events
+**Storage**: PostgreSQL for organizations, active/removed domain mappings, registration provenance,
+users, external identities, Candidate-profile links, application sessions, OAuth transactions,
+and audit events
 
 **Testing**: pytest with pytest-cov and deterministic OIDC fakes; Vitest with 100% line, branch,
 function, and statement coverage; Playwright for integrated browser and accessibility journeys
 
-**Target Platform**: Linux containers; current repository is greenfield and has no application
-runtime yet
+**Target Platform**: Existing Linux-containerized FastAPI, React/Vite, and PostgreSQL application
 
 **Project Type**: Monorepo web application with a modular FastAPI backend and React frontend
 
 **Performance Goals**: Record representative throughput, p50 latency, and p95 latency before
 release; results are a non-blocking baseline and do not impose a numeric v1 gate
 
-**Constraints**: Google-only authentication; pre-provisioned users; deny-by-default server-side
-authorization; 8-hour absolute and 2-hour idle session limits; all-session revocation on logout,
-role change, or disablement; WCAG 2.2 AA; secrets never exposed or logged
+**Constraints**: Google-only authentication; exact approved-domain registration; Admin-only mapping
+mutation; deny-by-default server-side authorization; transactional tenant migration and rollback;
+8-hour absolute and 2-hour idle session limits; all-session revocation on logout, role change,
+disablement, mapping removal, or reassignment; WCAG 2.2 AA; secrets never exposed or logged
 
-**Scale/Scope**: Internal v1, tenancy-ready single-organization operation, unlimited concurrent
-sessions per enabled user; no public registration, password authentication, MFA, or downstream
-JD/interview/report business implementation
+**Scale/Scope**: Internal multi-organization v1 with explicitly approved Google email domains and
+unlimited concurrent sessions per enabled user; Candidate self-registration only, no self-selected
+Manager/Admin role, password authentication, MFA, or public organization creation. Current source
+has only authentication-owned Candidate data; future organization-owned modules must implement the
+documented tenant-migration participant contract before their data can be reassigned.
 
 ## Constitution Check
 
@@ -55,31 +60,30 @@ JD/interview/report business implementation
 |---|---|---|
 | I. Modular Architecture | PASS | Auth, OIDC adapter, session service, audit service, and reusable authorization policy have explicit boundaries in [research.md](./research.md). |
 | II. Strict Types and Validated Boundaries | PASS | Runtime validation covers environment configuration, OAuth claims, API payloads, and frontend `unknown` responses; Python and TypeScript remain strictly typed. |
-| III. Security, Privacy, Least Privilege | PASS | Server-verified OIDC, opaque hashed sessions, state/nonce/PKCE, global revocation, deny-by-default policy, safe errors, and a named security/privacy review are required. |
-| IV. Versioned Data and API Contracts | PASS | The planning workflow initialized the previously empty Git metadata with repository-owner approval; [data-model.md](./data-model.md) defines forward-migrated tenancy constraints and the contracts define interfaces. Setup re-verifies the worktree before migrations. |
-| V. Layered Testing | PASS | Unit, contract, PostgreSQL integration, deterministic adapter, browser E2E, accessibility, collision, isolation, and lifecycle scenarios are listed in [quickstart.md](./quickstart.md). |
-| VI. Acceptance-Criteria Delivery | PASS | Clarified FR-001–FR-016 and SC-001–SC-009 map to design artifacts; no implementation unknown remains. |
+| III. Security, Privacy, Least Privilege | PASS | Exact approved-domain matching, Admin-only mutation, row locking, atomic rollback, session revocation, server-verified OIDC, safe errors, and a refreshed named security/privacy review are required. |
+| IV. Versioned Data and API Contracts | PASS | [data-model.md](./data-model.md) defines forward revision `002`, durable provenance, cascading tenancy constraints, and migration recovery; HTTP and tenant-migration interfaces are explicitly contracted. |
+| V. Layered Testing | PASS | Unit, contract, PostgreSQL migration/concurrency/rollback integration, deterministic OIDC, browser E2E, accessibility, collision, isolation, and lifecycle scenarios are listed in [quickstart.md](./quickstart.md). |
+| VI. Acceptance-Criteria Delivery | PASS | Clarified FR-001–FR-017 and SC-001–SC-011 map to design artifacts; no implementation unknown remains. |
 | VII. Dependency Discipline | PASS | [research.md](./research.md) justifies each new dependency and rejects Redis/JWT/additional frontend state or validation libraries for v1. |
 | VIII. Observable Failures | PASS | Correlation IDs, structured events, safe reason codes, audit records, session metrics, and non-blocking baseline evidence are defined. |
 | IX. Accessible UX | PASS | Contracts and [quickstart.md](./quickstart.md) require keyboard, focus, live-region, contrast, automated axe, and manual screen-reader verification. |
 
 ### Post-Design Gate
 
-PASS. The Phase 1 artifacts preserve organization/ownership fields, document API and policy
-contracts, specify migration recovery, define deterministic layered tests, and contain no
-constitution exception. The first regenerated task re-verifies the valid Git worktree before any
-migration is created. Implementation must regenerate
-`tasks.md` from these artifacts and run the
-project's coverage, security/privacy, accessibility, and plan/task consistency gates before it can
-be considered complete.
+PASS. The revised Phase 1 artifacts preserve tenant ownership through cascading composite
+constraints and one transaction, document Admin HTTP and tenant-migration participant contracts,
+specify revision `002` recovery, and require deterministic race and rollback tests. Historical
+AuditEvents remain immutable in their original organization; a new reassignment event records safe
+old/new organization identifiers. Implementation must regenerate `tasks.md`, use TDD, and pass the
+100% coverage, security/privacy, accessibility, migration, and plan/task consistency gates.
 
 ## Phase 0: Research Decisions
 
 Research is consolidated in [research.md](./research.md). Key decisions are:
 
 1. Use Authorization Code + OpenID Connect through a backend-only Authlib adapter.
-2. Pre-provision users by normalized email, then atomically bind the first verified Google login
-   to an unbound active user; subsequent logins resolve only `(issuer, subject)`.
+2. Preserve pre-provisioned first binding, but when no User matches, lock the exact active domain
+   mapping and atomically self-register a Candidate with immutable mapping provenance.
 3. Use opaque, high-entropy session secrets with only a SHA-256 digest stored in PostgreSQL.
 4. Store sessions in PostgreSQL so role/status mutation, global revocation, and audit insertion can
    share a transaction without adding Redis.
@@ -93,16 +97,28 @@ Research is consolidated in [research.md](./research.md). Key decisions are:
    environment configuration.
 9. Split coverage enforcement by backend/frontend while preserving the repository's 100% source-
    of-truth thresholds and updating existing CI/pre-push consumers.
+10. Persist soft-removed domain mappings and a nullable User provenance FK so removal/reassignment
+    targets only self-registered Candidates and never independently pre-provisioned users.
+11. Serialize registration and mapping mutation with PostgreSQL row locks; change composite tenant
+    FKs to `ON UPDATE CASCADE` so authentication-owned child rows follow a locked User move.
+12. Revoke sessions with `DOMAIN_MAPPING_REMOVED` or `DOMAIN_MAPPING_REASSIGNED`, increment auth
+    generation, migrate authentication-owned tenant rows, and retain historical AuditEvents.
+13. Expose Admin-only list/create/reassign/remove mapping APIs and a same-transaction tenant-
+    migration participant interface for future Candidate-owned modules.
+14. Decode the optional provider-signed Google `name` claim with strict normalization and use a
+    validated email local-part fallback.
+15. Preserve unbound pre-provisioned email binding without a mapping; treat reassignment to the
+    current organization as an idempotent `200` with no migration, revocation, or audit mutation.
 
 ## Phase 1: Design
 
 ### Persistence and Lifecycle
 
-[data-model.md](./data-model.md) defines Organization, User, ExternalLoginIdentity,
-CandidateProfile, AuthenticationSession, OAuthTransaction, and AuditEvent. Database constraints
-enforce uniqueness and tenancy where possible; services enforce cross-entity invariants in one
-transaction, including Candidate-profile readiness and all-session revocation during role/status
-changes.
+[data-model.md](./data-model.md) adds OrganizationDomainMapping and User registration provenance,
+plus mapping-specific revocation reasons. Revision `002` creates a partial unique active-domain
+index and changes authentication child tenancy FKs to `ON UPDATE CASCADE`, so registration,
+removal, and reassignment remain atomic. A mapping-row lock is the serialization point. Historical
+AuditEvents are immutable and are not rewritten during reassignment.
 
 ### HTTP and Authorization Interfaces
 
@@ -115,24 +131,30 @@ changes.
 - `POST /api/v1/admin/users`
 - `PATCH /api/v1/admin/users/{user_id}/role`
 - `PATCH /api/v1/admin/users/{user_id}/status`
+- `GET /api/v1/admin/organization-domain-mappings`
+- `POST /api/v1/admin/organization-domain-mappings`
+- `PATCH /api/v1/admin/organization-domain-mappings/{mapping_id}`
+- `DELETE /api/v1/admin/organization-domain-mappings/{mapping_id}`
 
-[access-policy.md](./contracts/access-policy.md) defines Candidate ownership, Manager managed-
-interview scope, Admin capabilities, organization isolation, and reusable dependency behavior.
-Downstream JD, allocation, interview, and report data behavior remains outside this feature.
+[access-policy.md](./contracts/access-policy.md) defines Candidate ownership, mapping-management
+Admin capability, Manager managed-interview scope, Admin capabilities, organization isolation, and
+reusable dependency behavior. [tenant-migration.md](./contracts/tenant-migration.md) defines the
+same-transaction participant interface that downstream Candidate-owned modules must implement.
+Application composition updates CORS to allow `DELETE`, wires mapping routes and migration
+participants, and adds one validated frontend application origin used for absolute OAuth
+success/error redirects.
 
 ### Validation
 
-[quickstart.md](./quickstart.md) defines configuration, migration, role login, first binding,
-collision, permission matrix, global logout, role/status revocation, expiry, safe recovery,
-Google-only surface, audit, accessibility, coverage, security/privacy, and performance-baseline
-validation scenarios.
+[quickstart.md](./quickstart.md) adds first-login self-registration, exact/subdomain denial,
+Admin mapping CRUD authorization, removal, reassignment, participant rollback, and concurrent
+registration/mutation scenarios to the existing auth validation suite.
 
 ### Pre-Implementation Environment Gate
 
-Before any scaffold or migration task, run `git rev-parse --git-dir`. The previously empty Git
-metadata was initialized during planning with repository-owner approval, so this check now
-succeeds. If it later fails, implementation stops before creating migrations. Migration changes
-must be included in normal verified commits and never bypass repository hooks.
+Before revision `002`, run `git rev-parse --git-dir`, verify revision `001` is the current deployed
+baseline, and snapshot constraint names. Migration changes must be included in normal verified
+commits and never bypass repository hooks.
 
 ## Project Structure
 
@@ -146,19 +168,22 @@ specs/001-user-auth/
 ├── quickstart.md
 ├── contracts/
 │   ├── auth.openapi.yaml
-│   └── access-policy.md
+│   ├── access-policy.md
+│   └── tenant-migration.md
 └── tasks.md                 # regenerated by $speckit-tasks after plan approval
 ```
 
-### Planned Source Code (created during implementation)
+### Source Code Delta
 
 ```text
 apps/
 ├── api/
 │   ├── app/
+│   │   ├── main.py         # route/participant wiring and CORS DELETE allowlist
 │   │   ├── auth/           # OIDC adapter, models, services, policies, routes, audit
-│   │   ├── admin/          # pre-provisioning and role/status mutation routes
-│   │   └── core/           # configuration, database, observability, middleware
+│   │   ├── admin/          # user and organization-domain mapping lifecycle
+│   │   ├── tenancy/        # migration coordinator and participant protocol
+│   │   └── core/           # frontend-origin configuration, database, observability, middleware
 │   ├── migrations/
 │   ├── scripts/
 │   └── tests/
@@ -182,14 +207,17 @@ scripts/
 .husky/pre-push                    # invokes the same quality gate without eval
 ```
 
-**Structure Decision**: Use `apps/api/app` and `apps/web/src` consistently. Authentication remains
-a module in the application API, not a new service. PostgreSQL migrations live with the API under
-`apps/api/migrations`. The current repository contains documentation and orchestration files only;
-all planned application paths must be created by ordered setup tasks before files beneath them are
-implemented.
+**Structure Decision**: Extend the existing `apps/api/app/auth` and `apps/api/app/admin` modules.
+Add one narrow `tenancy` module because cross-module migration coordination is a distinct required
+boundary; do not create a service or dependency. PostgreSQL migration `002` lives beside the
+implemented revision `001`. The frontend requires only existing safe error/routing coverage unless
+Admin mapping UI is separately specified; this feature contracts Admin APIs only.
 
 ## Complexity Tracking
 
-No constitution violation or complexity exception is required. PostgreSQL-backed sessions reuse
-the system of record and avoid a second persistence service; handwritten frontend runtime decoders
-avoid adding a validation library solely for the initial auth contract.
+No constitution violation or dependency exception is required. The participant protocol and
+cascading tenant constraints add justified complexity because FR-017 explicitly requires atomic
+migration of all Candidate-owned tenant data. A single PostgreSQL transaction and existing
+AsyncSession are retained; no queue, distributed transaction, Redis, or new package is introduced.
+Until another Candidate-owned module exists, no production participant is required: the
+coordinator updates locked Users and authentication-owned rows follow `ON UPDATE CASCADE`.

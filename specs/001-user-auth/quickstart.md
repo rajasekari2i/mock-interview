@@ -1,5 +1,9 @@
 # Quickstart Validation: User Authentication and Role Access
 
+> The domain-mapped Candidate registration implementation passed its automated validation on
+> 2026-08-09. Manual screen-reader and staging-provider evidence remain separately identified in
+> `validation.md` and are not represented as automated passes.
+
 This guide defines the runnable evidence expected after implementation. Regenerated tasks must
 create the referenced manifests/scripts with these stable command interfaces.
 
@@ -30,10 +34,12 @@ python3.12 -m venv .venv
 npm ci --prefix apps/web
 docker compose up -d postgres
 .venv/bin/python -m alembic -c apps/api/alembic.ini upgrade head
-.venv/bin/python apps/api/scripts/seed_auth.py --env-file .env.local
-.venv/bin/python apps/api/scripts/seed_auth.py --env-file .env.local
+.venv/bin/python apps/api/scripts/seed_auth.py --env-file .env.local \
+  --domain-mapping example.test:mockinterview-development
+.venv/bin/python apps/api/scripts/seed_auth.py --env-file .env.local \
+  --domain-mapping example.test:mockinterview-development
 .venv/bin/ruff check apps/api
-.venv/bin/python -m mypy apps/api/app
+.venv/bin/python -m mypy --config-file apps/api/pyproject.toml apps/api/app
 npm --prefix apps/web run lint
 npm --prefix apps/web run typecheck
 ```
@@ -51,34 +57,44 @@ Expected:
 Run the PostgreSQL migration suite:
 
 ```bash
-.venv/bin/pytest -c apps/api/pyproject.toml apps/api/tests/integration/test_auth_migrations.py
+.venv/bin/pytest -c apps/api/pyproject.toml apps/api/tests/integration/test_auth_schema.py
 ```
 
-1. Upgrade base → head.
+1. Populate revision `001`, upgrade `001` → `002`, and verify existing Users have null registration
+   provenance and unchanged authorization state.
 2. Verify every named uniqueness, tenancy, role/status, identity, Candidate-link, and token-digest
    constraint.
 3. Downgrade head → base in an isolated database.
 4. Upgrade base → head again.
-5. Exercise normalized-email, `(issuer, subject)`, User/provider, CandidateProfile, and session
-   digest collisions.
+5. Exercise active-domain uniqueness, provenance, normalized-email, `(issuer, subject)`,
+   User/provider, CandidateProfile, session digest, and `ON UPDATE CASCADE` tenant constraints.
 
 Expected: migrations round-trip in the test environment; every collision fails atomically without
 partial User, identity, profile, session, or audit state.
 
-## Scenario 2: First Google Binding and Role Login
+## Scenario 2: First Google Binding, Registration, and Role Login
 
 Using the deterministic OIDC fake:
 
-1. Pre-provision one active User for each role.
+1. Pre-provision one active User for each role using domains with no organization mapping.
 2. Give the Candidate its one-to-one CandidateProfile.
 3. Complete a first login for each using verified email and a stable fake issuer/subject.
 4. Complete a second login with the same subjects.
 5. Change the provider email while retaining the same subject and log in again.
+6. Sign in a new identity with an exact active domain mapping and a valid signed Google name.
+7. Repeat with no usable name and verify the validated email local-part fallback.
+8. Pre-provision one unbound User whose email domain maps to a different organization, then complete
+   first login with that exact email.
 
 Expected:
 
 - First login atomically binds one subject to the existing User; it creates no User, role, org, or
-  profile.
+  profile and does not require or add a domain-mapping provenance link.
+- A new mapped identity atomically creates exactly one active Candidate User, CandidateProfile,
+  ExternalLoginIdentity, registration provenance link, session, and required audit events.
+- When pre-provisioned binding and domain mapping both apply, the existing unique User wins before
+  mapping lookup, binds in its original organization, and retains null registration provenance;
+  no Candidate is created or diverted into the mapped organization.
 - Later logins resolve by subject, including after email drift.
 - Candidate lands at allocated-interviews shell/empty state; Manager at JD/allocation workspace;
   Admin at application management.
@@ -227,12 +243,12 @@ Run the representative PostgreSQL-backed baseline:
   --duration-seconds 60 \
   --concurrency 20 \
   --seeded-sessions 100 \
-  --mix auth-me=60,allowed=20,denied=20 \
+  --mix auth-me=50,allowed=15,denied=15,known-login=10,mapped-first-login=10 \
   --output specs/001-user-auth/performance/baseline.json
 ```
 
-The request mix exercises `/auth/me`, an allowed policy request, a denied request, and session idle
-refresh.
+The request mix exercises `/auth/me`, allowed and denied policy requests, known subject login, and
+mapped Candidate first login.
 
 Expected artifacts record build identifier, environment/database configuration, request mix,
 sustained requests/second, p50, p95, and expected/unexpected status counts. Correctness or setup
@@ -256,13 +272,78 @@ Expected:
 
 ## Scenario 14: Named Security and Privacy Review
 
-Review OIDC CSRF/nonce/PKCE, callback replay, redirect allowlisting, identity collision, session
-fixation/theft, cookie/CORS/CSRF configuration, login abuse/rate limiting, trusted proxies, account
-enumeration, authorization/tenancy, audit privacy, secret handling, global revocation, cache/history,
-and development/test adapter isolation.
+Review OIDC CSRF/nonce/PKCE, callback replay, configured frontend redirects, exact/IDNA domain
+validation, advisory-lock namespace/order, registration collision, mapping Admin authorization,
+tenant migration/rollback, participant completeness, session fixation/theft, cookie/CORS/CSRF,
+login abuse/rate limiting, trusted proxies, account enumeration, audit privacy, secret handling,
+global revocation, cache/history, and development/test adapter isolation.
 
 Expected: zero unresolved critical or high-severity issue before release. Any accepted lower issue
 has an owner and remediation date.
+
+## Scenario 15: Exact Domain Registration Denials
+
+Exercise case-insensitive exact matches plus unmapped, removed, disabled-organization, malformed,
+wildcard, URL-shaped, `@`-containing, parent-domain, and subdomain inputs.
+
+Expected: only the exact canonical active mapping registers. Every denial returns safe recovery and
+leaves zero partial User, profile, identity, session, provenance, or success-audit rows.
+
+## Scenario 16: Admin Mapping API and Audit
+
+Exercise list/create/reassign/remove as Admin and repeat every operation with missing authentication,
+Candidate/Manager sessions, missing/invalid CSRF, duplicate active domain, missing/disabled target
+organization, removed mapping, and malformed payload. From an allowed frontend origin, issue a CORS
+preflight for `DELETE /api/v1/admin/organization-domain-mappings/{mapping_id}` and repeat it from a
+disallowed origin.
+
+Expected: only authorized Admin operations succeed. Mutations and denials emit safe audit evidence;
+responses and logs contain no email, display name, domain, Google claim, or credential beyond the
+explicit Admin mapping response contract. The allowed-origin DELETE preflight succeeds with
+credentialed exact-origin headers; the disallowed-origin preflight is denied.
+
+## Scenario 17: Mapping Removal
+
+Create active and disabled self-registered Candidates through one mapping, an independently
+pre-provisioned same-domain Candidate, unrelated mapping users, and multiple active sessions.
+Remove the mapping twice.
+
+Expected: the first removal soft-removes the mapping, disables exactly provenance-linked
+Candidates, increments their generations, revokes every active session with
+`DOMAIN_MAPPING_REMOVED`, and preserves all unrelated/pre-provisioned users. Replay follows the
+documented not-found/conflict contract and makes no additional mutation.
+
+## Scenario 18: Atomic Mapping Reassignment
+
+Reassign a populated mapping to an active organization. Include authentication rows and a synthetic
+Candidate-owned tenant-migration participant. Repeat with a target email collision, disabled target,
+participant validation failure, participant write failure, audit failure, and a target organization
+equal to the current mapping organization.
+
+Expected: success migrates mapping, provenance-linked Users, profiles, identities, sessions, and
+participant rows; increments generations; revokes sessions with `DOMAIN_MAPPING_REASSIGNED`; and
+requires fresh login in the target organization. Every injected failure leaves all source rows,
+mapping state, generations, sessions, and audit counts unchanged. Historical AuditEvents remain in
+their original organization. A same-organization request returns `200` with the current mapping and
+does not invoke participants, change generations, revoke sessions, or append mutation audits.
+
+## Scenario 19: Registration and Mapping Concurrency
+
+Use two independent PostgreSQL sessions and deterministic barriers/timeouts for registration racing
+mapping create, removal, and reassignment in both lock orders. Repeat concurrent callbacks for one
+new Google subject.
+
+Expected: advisory-domain then row-lock ordering produces one complete pre- or post-mutation state,
+never a mixed tenant. Duplicate callbacks create one User/identity only. Tests fail on deadlock or
+timeout rather than hanging.
+
+## Scenario 20: Frontend Callback Redirects
+
+Exercise success and every safe callback failure with hostile Host/Forwarded headers.
+
+Expected: redirects use only the validated configured frontend application origin and allowlisted
+relative path. Error redirects contain only an allowlisted code and opaque correlation ID; the web
+route announces safe recovery accessibly and never lands on the API server's `/auth/error` path.
 
 ## Staging-Only Google Smoke Test
 

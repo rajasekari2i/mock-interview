@@ -46,7 +46,7 @@
 - [x] Manager users can upload JDs and allocate interviews to candidates.
 - [x] Authorization must prevent users from accessing functionality or data outside their permitted role and scope.
 
-- [x] Out of Scope for v1
+- [ ] Out of Scope for v1
       - Username/password authentication.
       - Password-reset functionality.
       - Public/self-service user registration.

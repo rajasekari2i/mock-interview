@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-08-09T20:00:48.622540+00:00",
+  "environment": {
+    "python": "3.12.3",
+    "platform": "Linux-7.0.0-28-generic-x86_64-with-glibc2.39",
+    "databaseVersion": "PostgreSQL 16.14 (Ubuntu 16.14-1.pgdg24.04+1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, 64-bit"
+  },
+  "configuration": {
+    "samples": 100,
+    "concurrency": 10,
+    "users": 1000,
+    "jobDescriptions": 1000
+  },
+  "results": {
+    "candidateHome": {
+      "samples": 25,
+      "p50Milliseconds": 16.113210003823042,
+      "p95Milliseconds": 39.46550999535248,
+      "maxMilliseconds": 96.13574802642688,
+      "failures": 0
+    },
+    "managerHome": {
+      "samples": 25,
+      "p50Milliseconds": 15.916030039079487,
+      "p95Milliseconds": 92.69144997233525,
+      "maxMilliseconds": 99.02816702378914,
+      "failures": 0
+    },
+    "adminUsers": {
+      "samples": 25,
+      "p50Milliseconds": 16.304833989124745,
+      "p95Milliseconds": 23.641869018319994,
+      "maxMilliseconds": 98.21324999211356,
+      "failures": 0
+    },
+    "adminJds": {
+      "samples": 25,
+      "p50Milliseconds": 16.21682196855545,
+      "p95Milliseconds": 24.181201006285846,
+      "maxMilliseconds": 97.28745900793001,
+      "failures": 0
+    }
+  }
+}

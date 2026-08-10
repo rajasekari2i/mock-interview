@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-08-09T16:42:46.785696+00:00",
+  "buildIdentifier": "local-working-tree",
+  "environment": {
+    "python": "3.12.3",
+    "platform": "Linux-7.0.0-28-generic-x86_64-with-glibc2.39",
+    "database": "PostgreSQL",
+    "databaseVersion": "PostgreSQL 16.14 (Ubuntu 16.14-1.pgdg24.04+1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, 64-bit"
+  },
+  "configuration": {
+    "warmupSeconds": 10,
+    "durationSeconds": 60,
+    "concurrency": 20,
+    "seededSessions": 100,
+    "requestMix": {
+      "auth-me": 50,
+      "allowed": 15,
+      "denied": 15,
+      "known-login": 10,
+      "mapped-first-login": 10
+    }
+  },
+  "results": {
+    "requests": 11196,
+    "throughputPerSecond": 186.3348978283955,
+    "latencyMilliseconds": {
+      "p50": 55.49657149822451,
+      "p95": 580.3867749636993
+    },
+    "outcomes": {
+      "allowed:expected": 1677,
+      "auth-me:expected": 5600,
+      "denied:expected": 1679,
+      "known-login:expected": 1120,
+      "mapped-first-login:expected": 1120
+    }
+  },
+  "numericGateApplied": false
+}

@@ -13,3 +13,8 @@ build/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+*.egg-info/
+.coverage*
+htmlcov/
+playwright-report/
+test-results/

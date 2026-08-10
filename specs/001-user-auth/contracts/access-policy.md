@@ -26,6 +26,7 @@ those modules' domain behavior.
 | `org_id` | yes | Resource organization |
 | `capability` | yes | Explicit requested capability |
 | `candidate_owner_user_id` | ownership capabilities | Candidate owner |
+| `allocating_manager_user_id` | allocation-candidate capability | Manager who allocated the Candidate/interview |
 | `managing_manager_user_id` | managed readiness capability | Responsible Manager |
 | `resource_id` | when available | Safe resource reference for audit |
 
@@ -38,8 +39,10 @@ Missing required scope data produces DENY.
 - `CANDIDATE_JOIN_OWN_INTERVIEW`
 - `MANAGER_UPLOAD_JD`
 - `MANAGER_ALLOCATE_INTERVIEW`
+- `MANAGER_VIEW_ALLOCATION_CANDIDATE`
 - `MANAGER_VIEW_MANAGED_READINESS`
 - `ADMIN_MANAGE_USERS`
+- `ADMIN_MANAGE_DOMAIN_MAPPINGS`
 - `ADMIN_MANAGE_APPLICATION`
 - `ADMIN_VIEW_ALL_REPORTS`
 
@@ -50,8 +53,10 @@ Missing required scope data produces DENY.
 3. Deny if the role lacks the requested capability.
 4. For Candidate-owned capabilities, require `candidate_owner_user_id == AuthContext.user_id` and
    the authenticated Candidate profile.
-5. For managed readiness, require `managing_manager_user_id == AuthContext.user_id`.
-6. Allow only after every applicable condition succeeds.
+5. For allocation-scoped Candidate data, require
+   `allocating_manager_user_id == AuthContext.user_id`.
+6. For managed readiness, require `managing_manager_user_id == AuthContext.user_id`.
+7. Allow only after every applicable condition succeeds.
 
 Authorization is evaluated in or before the resource query so protected data is not fetched and
 then filtered in application memory.
@@ -67,6 +72,7 @@ then filtered in application memory.
 | View managed readiness | Denied | Own managed interviews only | Allowed |
 | View all reports | Denied | Denied | Allowed |
 | Manage users/roles/status | Denied | Denied | Allowed |
+| Manage organization domain mappings | Denied | Denied | Allowed |
 
 ## HTTP Behavior
 
@@ -76,6 +82,8 @@ then filtered in application memory.
   consistently by the consuming resource contract.
 - Every denial emits a secret-safe AuditEvent with capability, safe resource reference, reason,
   and correlation ID.
+- Domain mapping create/reassign/remove requires `ADMIN_MANAGE_DOMAIN_MAPPINGS`, exact Origin, and
+  the session-bound CSRF cookie/header proof. Listing requires the capability but no CSRF token.
 - Navigation visibility never substitutes for this policy.
 
 ## Integration Verification
@@ -86,6 +94,7 @@ The test matrix must include:
 
 - Candidate own versus other Candidate and cross-organization resources.
 - Manager managed versus another Manager's readiness resource.
+- Manager-allocated versus another Manager's Candidate/allocation resource.
 - Manager denial for all-report access.
 - Admin allowed capabilities within organization context.
 - Missing ownership/manager scope default denial.

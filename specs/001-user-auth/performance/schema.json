@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Authentication baseline result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "recordedAt", "buildIdentifier", "environment", "configuration", "results", "numericGateApplied"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "recordedAt": { "type": "string", "format": "date-time" },
+    "buildIdentifier": { "type": "string", "minLength": 1 },
+    "environment": { "type": "object" },
+    "configuration": { "type": "object" },
+    "results": {
+      "type": "object",
+      "required": ["requests", "throughputPerSecond", "latencyMilliseconds", "outcomes"],
+      "properties": {
+        "requests": { "type": "integer", "minimum": 1 },
+        "throughputPerSecond": { "type": "number", "exclusiveMinimum": 0 },
+        "latencyMilliseconds": {
+          "type": "object",
+          "required": ["p50", "p95"],
+          "properties": {
+            "p50": { "type": "number", "minimum": 0 },
+            "p95": { "type": "number", "minimum": 0 }
+          }
+        },
+        "outcomes": { "type": "object" }
+      }
+    },
+    "numericGateApplied": { "const": false }
+  }
+}

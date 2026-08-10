@@ -1,54 +1,62 @@
-# CI Pipeline — lint, typecheck, test, coverage
-# Scaffolded by metaswarm init. Customize for your project.
-
 name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 001-user-auth]
   pull_request:
     branches: [main]
 
 jobs:
-  ci:
-    name: Lint, Test & Coverage
+  quality:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: mockinterview_test
+          POSTGRES_USER: mockinterview
+          POSTGRES_PASSWORD: test-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mockinterview -d mockinterview_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      APP_ENV: test
+      TEST_DATABASE_URL: postgresql+psycopg://mockinterview:test-only-password@localhost:5432/mockinterview_test
+      FRONTEND_ORIGINS: '["http://localhost:5173"]'
+      GOOGLE_OIDC_CLIENT_ID: deterministic-test-client
+      GOOGLE_OIDC_CLIENT_SECRET: deterministic-test-secret
+      GOOGLE_OIDC_REDIRECT_URI: http://localhost:8000/api/v1/auth/google/callback
+      OAUTH_TRANSACTION_ENCRYPTION_KEYS: test-current=ZmFrZS1rZXktcmVwbGFjZWQtaW4tdGVzdC1maXh0dXJl
+      SESSION_COOKIE_SECURE: "false"
+      SESSION_ABSOLUTE_SECONDS: "28800"
+      SESSION_IDLE_SECONDS: "7200"
+      CSRF_ALLOWED_ORIGINS: '["http://localhost:5173"]'
+      ENABLE_FAKE_OIDC: "true"
     steps:
       - uses: actions/checkout@v4
-
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: apps/api/requirements.lock
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Lint
-        run: npm run lint
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Test with coverage
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Review dependencies before installation
+        run: bash scripts/check-dependency-licenses.sh
+      - name: Install backend dependencies
         run: |
-          if [ -f .coverage-thresholds.json ]; then
-            # Read command from coverage config
-            CMD=$(node -e "console.log(JSON.parse(require('fs').readFileSync('.coverage-thresholds.json','utf-8')).enforcement.command)")
-            echo "Running coverage command: $CMD"
-            # Split into array for safe execution
-            read -ra CMD_ARRAY <<< "$CMD"
-            # Validate first word is a known package manager/runner
-            case "${CMD_ARRAY[0]}" in
-              npm|pnpm|yarn|npx|bun|cargo|pytest|go|make) ;;
-              *) echo "Error: enforcement command must start with a known package manager/runner"; exit 1 ;;
-            esac
-            # Reject shell metacharacters in the full command string
-            if echo "$CMD" | grep -qE '[;|&`$(){}<>\\]'; then
-              echo "Error: enforcement command contains disallowed shell metacharacters"
-              exit 1
-            fi
-            # Execute as array — prevents all shell metacharacter interpretation
-            "${CMD_ARRAY[@]}"
-          else
-            npm test
-          fi
+          python -m pip install --requirement apps/api/requirements.lock
+          python -m pip install --no-deps --editable apps/api
+      - name: Install frontend dependencies
+        run: npm ci --prefix apps/web --ignore-scripts
+      - name: Install Playwright browser
+        run: npx --prefix apps/web playwright install --with-deps chromium
+      - name: Run shared quality gate
+        run: bash scripts/quality-gate.sh
